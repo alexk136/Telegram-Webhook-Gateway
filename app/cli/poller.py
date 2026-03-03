@@ -73,10 +73,12 @@ class PullBridgePoller:
             local_webhook_url=self.local_webhook_url,
             msg=msg,
         )
+        ack_error: str | None = None
+        nack_error: str | None = None
 
         if forward_result.success:
             self.counters.forward_success_total += 1
-            ack_ok = await self._ack_one(message_id=message_id)
+            ack_ok, ack_error = await self._ack_one(message_id=message_id)
             if ack_ok:
                 self.counters.acked_total += 1
                 outcome = "FORWARDED_OK + ACK_OK"
@@ -85,7 +87,7 @@ class PullBridgePoller:
                 outcome = "FORWARDED_OK + ACK_FAIL"
         else:
             self.counters.forward_fail_total += 1
-            nack_ok = await self._nack_one(message_id=message_id, forward_result=forward_result)
+            nack_ok, nack_error = await self._nack_one(message_id=message_id, forward_result=forward_result)
             if nack_ok:
                 self.counters.nacked_total += 1
                 outcome = "FORWARDED_FAIL + NACK_OK"
@@ -94,25 +96,33 @@ class PullBridgePoller:
                 outcome = "FORWARDED_FAIL + NACK_FAIL"
 
         logger.info(
-            "pull_message_id=%s bot_id=%s telegram_update_id=%s outcome=%s",
+            "pull_message_id=%s bot_id=%s telegram_update_id=%s outcome=%s forward_error=%s ack_error=%s nack_error=%s",
             message_id,
             bot_id,
             telegram_update_id,
             outcome,
+            forward_result.error,
+            ack_error,
+            nack_error,
         )
 
-    async def _ack_one(self, *, message_id: int) -> bool:
+    async def _ack_one(self, *, message_id: int) -> tuple[bool, str | None]:
         try:
             await self.api_client.ack_updates(
                 message_ids=[message_id],
                 consumer_id=self.consumer_id,
             )
-            return True
-        except Exception:
+            return True, None
+        except Exception as exc:
             logger.exception("ACK failed for pull_message_id=%s", message_id)
-            return False
+            return False, str(exc)
 
-    async def _nack_one(self, *, message_id: int, forward_result: ForwardResult) -> bool:
+    async def _nack_one(
+        self,
+        *,
+        message_id: int,
+        forward_result: ForwardResult,
+    ) -> tuple[bool, str | None]:
         error = forward_result.error or "forward_failed"
         try:
             await self.api_client.nack_updates(
@@ -120,7 +130,7 @@ class PullBridgePoller:
                 consumer_id=self.consumer_id,
                 error=error,
             )
-            return True
-        except Exception:
+            return True, None
+        except Exception as exc:
             logger.exception("NACK failed for pull_message_id=%s", message_id)
-            return False
+            return False, str(exc)
