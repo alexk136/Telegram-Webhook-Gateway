@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 
-from app.cli.api_client import PullApiClient
+from app.cli.api_client import ClientConfigError, PullApiClient
 from app.cli.config import CLIConfig, load_cli_config
 from app.cli.poller import PullBridgePoller
 
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
     try:
         return asyncio.run(_main_async(argv))
-    except ValueError as exc:
+    except (ValueError, ClientConfigError) as exc:
         logger.error("Configuration error: %s", exc)
         return 2
 
