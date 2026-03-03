@@ -91,8 +91,54 @@ class NackResponse(BaseModel):
     results: list[NackResultItem]
 
 
+class PullInboxStats(BaseModel):
+    bot_id: str | None = None
+    new_count: int
+    leased_count: int
+    acked_count: int
+    dead_count: int
+    expired_leases: int
+
+
+class PullStatsResponse(BaseModel):
+    pull_inbox: PullInboxStats
+    generated_at: str
+
+
 def _to_utc_iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@router.get("/api/pull/stats", response_model=PullStatsResponse)
+async def pull_stats(bot_id: str | None = None):
+    if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
+        raise HTTPException(status_code=503, detail="Queue backend is not available")
+
+    normalized_bot_id: str | None = None
+    if bot_id is not None:
+        normalized_bot_id = bot_id.strip()
+        if not normalized_bot_id:
+            raise HTTPException(status_code=422, detail="bot_id must not be empty")
+        if normalized_bot_id not in settings.known_bot_ids:
+            raise HTTPException(status_code=404, detail="Unknown bot_id")
+
+    stats = await state.queue.pull_inbox_stats(bot_id=normalized_bot_id)
+    pull_inbox = PullInboxStats(
+        bot_id=normalized_bot_id,
+        new_count=stats["new_count"],
+        leased_count=stats["leased_count"],
+        acked_count=stats["acked_count"],
+        dead_count=stats["dead_count"],
+        expired_leases=stats["expired_leases"],
+    )
+    return PullStatsResponse(
+        pull_inbox=pull_inbox,
+        generated_at=_now_utc_iso(),
+    )
 
 
 @router.post("/api/pull", response_model=PullResponse)

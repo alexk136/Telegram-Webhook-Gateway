@@ -132,6 +132,10 @@ SQLITE_PATH=./events.db
 MAX_RETRIES=5
 BASE_RETRY_DELAY_SEC=2
 
+# Pull API
+PULL_API_TOKEN=change_me
+MAX_PULL_RETRIES=5
+
 # Outbound webhook signature (optional)
 OUTBOUND_SECRET=your_secret_here
 ```
@@ -151,6 +155,8 @@ OUTBOUND_SECRET=your_secret_here
 | `SQLITE_PATH` | `./events.db` | Queue database location |
 | `MAX_RETRIES` | `5` | Retry attempts before dropping |
 | `BASE_RETRY_DELAY_SEC` | `2` | Initial retry delay (exponential) |
+| `PULL_API_TOKEN` | — | Bearer token for `/api/pull`, `/api/ack`, `/api/nack`, `/api/pull/stats` |
+| `MAX_PULL_RETRIES` | `5` | Max pull retries before message moves to `dead` |
 | `OUTBOUND_SECRET` | — | HMAC secret for outbound signatures |
 
 ## 🔀 Multi-Target Fan-Out
@@ -252,7 +258,38 @@ Response:
 ```json
 {
   "queued": 5,
+  "dead_count": 1,
   "uptime_sec": 3600
+}
+```
+
+### Pull Queue Statistics
+
+```
+GET /api/pull/stats
+Authorization: Bearer <PULL_API_TOKEN>
+```
+
+Optional filter by bot:
+
+```
+GET /api/pull/stats?bot_id=<bot_id>
+Authorization: Bearer <PULL_API_TOKEN>
+```
+
+Response:
+
+```json
+{
+  "pull_inbox": {
+    "bot_id": "123456",
+    "new_count": 14,
+    "leased_count": 3,
+    "acked_count": 248,
+    "dead_count": 2,
+    "expired_leases": 1
+  },
+  "generated_at": "2026-03-03T17:00:00Z"
 }
 ```
 

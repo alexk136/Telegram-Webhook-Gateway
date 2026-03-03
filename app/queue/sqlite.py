@@ -108,6 +108,52 @@ class SQLiteQueue:
             )
             row = await cursor.fetchone()
             return row[0]
+
+    async def pull_inbox_stats(self, *, bot_id: Optional[str] = None) -> Dict[str, int]:
+        now = int(time.time())
+        params: List[Any] = []
+        where = ""
+        if bot_id is not None:
+            where = " WHERE bot_id = ?"
+            params.append(bot_id)
+
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                f"""
+                SELECT
+                    SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count,
+                    SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) AS leased_count,
+                    SUM(CASE WHEN status = 'acked' THEN 1 ELSE 0 END) AS acked_count,
+                    SUM(CASE WHEN status = 'dead' THEN 1 ELSE 0 END) AS dead_count,
+                    SUM(
+                        CASE
+                            WHEN status = 'leased' AND lease_until < ? THEN 1
+                            ELSE 0
+                        END
+                    ) AS expired_leases
+                FROM pull_inbox
+                {where}
+                """,
+                (now, *params),
+            )
+            row = await cursor.fetchone()
+
+        if row is None:
+            return {
+                "new_count": 0,
+                "leased_count": 0,
+                "acked_count": 0,
+                "dead_count": 0,
+                "expired_leases": 0,
+            }
+
+        return {
+            "new_count": int(row[0] or 0),
+            "leased_count": int(row[1] or 0),
+            "acked_count": int(row[2] or 0),
+            "dead_count": int(row[3] or 0),
+            "expired_leases": int(row[4] or 0),
+        }
         
     async def increment_attempts(self, event_id: int):
         async with aiosqlite.connect(self.path) as db:
