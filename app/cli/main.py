@@ -52,8 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     poll_parser.add_argument(
         "--iterations",
         type=int,
-        default=1,
-        help="Number of poll iterations. Use 0 for infinite loop.",
+        default=0,
+        help="Number of poll iterations. Default 0 means infinite loop.",
     )
     poll_parser.add_argument(
         "--poll-interval-sec",
@@ -85,6 +85,8 @@ async def run_stats(*, api_client: PullApiClient, stats_bot_id: str | None) -> i
 async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int) -> int:
     if not cfg.local_webhook_url:
         raise ValueError("LOCAL_WEBHOOK_URL is required for poll command")
+    if iterations < 0:
+        raise ValueError("--iterations must be >= 0")
 
     poller = PullBridgePoller(
         api_client=api_client,
@@ -92,17 +94,36 @@ async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int
         consumer_id=cfg.consumer_id,
         local_timeout_sec=cfg.request_timeout_sec,
     )
+    logger.info(
+        "poll started: bot_id=%s consumer_id=%s batch_size=%s lease_seconds=%s interval_sec=%s iterations=%s",
+        cfg.bot_id,
+        cfg.consumer_id,
+        cfg.batch_size,
+        cfg.lease_seconds,
+        cfg.poll_interval_sec,
+        iterations,
+    )
 
     current = 0
     while True:
-        items = await api_client.pull_updates(
-            bot_id=cfg.bot_id,
-            consumer_id=cfg.consumer_id,
-            limit=cfg.batch_size,
-            lease_seconds=cfg.lease_seconds,
-        )
-        if items:
-            await poller.process_batch(items)
+        try:
+            items = await api_client.pull_updates(
+                bot_id=cfg.bot_id,
+                consumer_id=cfg.consumer_id,
+                limit=cfg.batch_size,
+                lease_seconds=cfg.lease_seconds,
+            )
+            if not items:
+                logger.info("poll iteration=%s: no messages", current + 1)
+            else:
+                logger.info("poll iteration=%s: pulled=%s", current + 1, len(items))
+                await poller.process_batch(items)
+        except TemporaryNetworkError as exc:
+            logger.warning("poll iteration=%s temporary network error: %s", current + 1, exc)
+        except GatewayApiClientError as exc:
+            logger.error("poll iteration=%s gateway api error: %s", current + 1, exc)
+        except Exception:
+            logger.exception("poll iteration=%s unexpected error", current + 1)
 
         current += 1
         if iterations > 0 and current >= iterations:
@@ -166,6 +187,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
     try:
         return asyncio.run(_main_async(argv))
+    except KeyboardInterrupt:
+        logger.info("Interrupted")
+        return 130
     except (ValueError, ClientConfigError) as exc:
         logger.error("Configuration error: %s", exc)
         return 2
