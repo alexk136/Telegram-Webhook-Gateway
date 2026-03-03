@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     MAX_RETRIES: int = 5
     BASE_RETRY_DELAY_SEC: int = 2
+    PULL_MAX_LIMIT: int = 100
 
     OUTBOUND_SECRET: str | None = None
     BOT_CONTEXT_BY_KEY: Dict[str, str] = Field(
@@ -95,6 +96,14 @@ class Settings(BaseSettings):
                 if u.strip()
             ]
         return [self.TARGET_WEBHOOK_URL]
+
+    @property
+    def known_bot_ids(self) -> set[str]:
+        bot_ids = {bot_id for bot_id in self.BOT_CONTEXT_BY_KEY.values() if bot_id}
+        token_prefix = self.BOT_TOKEN.split(":", 1)[0].strip()
+        if token_prefix:
+            bot_ids.add(token_prefix)
+        return bot_ids
 
 
 settings = Settings()
