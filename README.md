@@ -293,6 +293,55 @@ Response:
 }
 ```
 
+### Pull Messages
+
+```
+POST /api/pull
+Authorization: Bearer <PULL_API_TOKEN>
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "bot_id": "123456",
+  "consumer_id": "local-cli-main",
+  "limit": 10,
+  "lease_seconds": 30
+}
+```
+
+Response:
+
+```json
+{
+  "messages": [
+    {
+      "id": 101,
+      "bot_id": "123456",
+      "telegram_update_id": 987654321,
+      "payload": {
+        "update_id": 987654321
+      },
+      "lease_until": "2026-03-03T15:45:30Z"
+    }
+  ],
+  "count": 1,
+  "server_time": "2026-03-03T15:45:00Z"
+}
+```
+
+If no rows are available for the requested bot, the endpoint still returns `200 OK`:
+
+```json
+{
+  "messages": [],
+  "count": 0,
+  "server_time": "2026-03-03T15:45:00Z"
+}
+```
+
 ## 🖥 CLI Consumer
 
 CLI находится в том же репозитории в модуле `app/cli` и запускается отдельно от сервера:

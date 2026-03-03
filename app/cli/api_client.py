@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from app.contracts.pull import PullResponseContract
+
 
 class ClientConfigError(ValueError):
     pass
@@ -92,10 +94,13 @@ class GatewayApiClient:
             "lease_seconds": lease_seconds,
         }
         data = await self._request("POST", "/api/pull", json=payload)
-        items = data.get("items")
-        if not isinstance(items, list):
-            raise ResponseParseError("/api/pull response must contain list field 'items'")
-        return list(items)
+        try:
+            parsed = PullResponseContract(**data)
+        except Exception as exc:
+            raise ResponseParseError(
+                "/api/pull response must match pull contract with list field 'messages'"
+            ) from exc
+        return [message.model_dump() for message in parsed.messages]
 
     async def ack_update(self, *, message_id: int, consumer_id: str) -> dict[str, Any]:
         return await self.ack_updates(message_ids=[message_id], consumer_id=consumer_id)

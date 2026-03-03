@@ -122,8 +122,31 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["count"], 1)
-        self.assertEqual(body["items"][0]["id"], 1)
+        self.assertIn("server_time", body)
+        self.assertEqual(body["messages"][0]["id"], 1)
+        self.assertEqual(body["messages"][0]["bot_id"], self.bot_id)
+        self.assertEqual(body["messages"][0]["telegram_update_id"], 1001)
+        self.assertEqual(body["messages"][0]["payload"], {"ok": True})
+        self.assertTrue(body["messages"][0]["lease_until"].endswith("Z"))
         self.assertEqual(self.fake_queue.lease_calls, 1)
+
+    async def test_pull_empty_queue_returns_200_and_empty_messages(self):
+        self.fake_queue.lease_pull = _empty_lease_pull  # type: ignore[method-assign]
+        response = await self.client.post(
+            "/api/pull",
+            json={
+                "bot_id": self.bot_id,
+                "consumer_id": "consumer-A",
+                "limit": 1,
+                "lease_seconds": 30,
+            },
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["messages"], [])
+        self.assertEqual(body["count"], 0)
+        self.assertIn("server_time", body)
 
     async def test_ack_requires_token_and_has_no_side_effects_on_401(self):
         payload = {"consumer_id": "consumer-A", "message_ids": [1]}
@@ -156,6 +179,10 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ok_response.status_code, 200)
         self.assertEqual(self.fake_queue.nack_calls, 1)
+
+
+async def _empty_lease_pull(*, consumer_id, lease_seconds, limit, bot_id):
+    return []
 
 
 if __name__ == "__main__":

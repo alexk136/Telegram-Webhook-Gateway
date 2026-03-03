@@ -58,7 +58,7 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_adds_bearer_header_and_payloads(self):
         fake = _FakeAsyncClient(
             [
-                _json_response(200, {"items": []}),
+                _json_response(200, {"messages": [], "count": 0, "server_time": "2026-03-03T00:00:00Z"}),
                 _json_response(200, {"ok": True}),
                 _json_response(200, {"ok": True}),
                 _json_response(200, {"ok": True}),
@@ -112,7 +112,7 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAsyncClient(
             [
                 httpx.ReadTimeout("timeout", request=req),
-                _json_response(200, {"items": []}),
+                _json_response(200, {"messages": [], "count": 0, "server_time": "2026-03-03T00:00:00Z"}),
             ]
         )
         client = GatewayApiClient(
@@ -130,7 +130,7 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAsyncClient(
             [
                 _json_response(503, {"detail": "temporary"}),
-                _json_response(200, {"items": []}),
+                _json_response(200, {"messages": [], "count": 0, "server_time": "2026-03-03T00:00:00Z"}),
             ]
         )
         client = GatewayApiClient(
@@ -148,6 +148,12 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAsyncClient([_json_response(401, {"detail": "Unauthorized"})])
         client = GatewayApiClient(base_url="http://localhost:8080", pull_api_token="tok", client=fake)
         with self.assertRaises(AuthorizationError):
+            await client.pull_updates(bot_id="123456", consumer_id="c", limit=1, lease_seconds=10)
+
+    async def test_pull_response_without_messages_field_raises_parse_error(self):
+        fake = _FakeAsyncClient([_json_response(200, {"items": []})])
+        client = GatewayApiClient(base_url="http://localhost:8080", pull_api_token="tok", client=fake)
+        with self.assertRaises(ResponseParseError):
             await client.pull_updates(bot_id="123456", consumer_id="c", limit=1, lease_seconds=10)
 
     async def test_400_is_non_retryable_http_error(self):

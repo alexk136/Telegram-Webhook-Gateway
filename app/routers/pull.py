@@ -1,12 +1,17 @@
-from datetime import datetime, timezone
-from typing import Any
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel
 
 import app.state as state
 from app.config import settings
+from app.contracts.pull import (
+    PullMessageContract,
+    PullRequestContract,
+    PullResponseContract,
+    now_utc_iso,
+    to_utc_iso,
+)
 
 
 async def require_pull_api_auth(authorization: str | None = Header(default=None)) -> None:
@@ -34,35 +39,6 @@ async def require_pull_api_auth(authorization: str | None = Header(default=None)
 
 
 router = APIRouter(tags=["pull"], dependencies=[Depends(require_pull_api_auth)])
-
-
-class PullRequest(BaseModel):
-    bot_id: str
-    consumer_id: str
-    limit: int = Field(..., gt=0)
-    lease_seconds: int = Field(..., gt=0)
-
-    @validator("bot_id", "consumer_id", pre=True)
-    def ensure_non_empty(cls, value: Any) -> str:
-        if value is None:
-            raise ValueError("must not be empty")
-        text = str(value).strip()
-        if not text:
-            raise ValueError("must not be empty")
-        return text
-
-
-class PullItem(BaseModel):
-    id: int
-    bot_id: str
-    telegram_update_id: int
-    lease_until: str
-    payload: dict[str, Any]
-
-
-class PullResponse(BaseModel):
-    items: list[PullItem]
-    count: int
 
 
 class AckRejected(BaseModel):
@@ -105,14 +81,6 @@ class PullStatsResponse(BaseModel):
     generated_at: str
 
 
-def _to_utc_iso(ts: int) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _now_utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 @router.get("/api/pull/stats", response_model=PullStatsResponse)
 async def pull_stats(bot_id: str | None = None):
     if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
@@ -137,12 +105,12 @@ async def pull_stats(bot_id: str | None = None):
     )
     return PullStatsResponse(
         pull_inbox=pull_inbox,
-        generated_at=_now_utc_iso(),
+        generated_at=now_utc_iso(),
     )
 
 
-@router.post("/api/pull", response_model=PullResponse)
-async def pull_messages(payload: PullRequest):
+@router.post("/api/pull", response_model=PullResponseContract)
+async def pull_messages(payload: PullRequestContract):
     if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
         raise HTTPException(status_code=503, detail="Queue backend is not available")
 
@@ -162,17 +130,21 @@ async def pull_messages(payload: PullRequest):
         bot_id=payload.bot_id,
     )
 
-    items = [
-        PullItem(
+    messages = [
+        PullMessageContract(
             id=item["id"],
             bot_id=item["bot_id"],
             telegram_update_id=item["telegram_update_id"],
-            lease_until=_to_utc_iso(int(item["lease_until"])),
+            lease_until=to_utc_iso(int(item["lease_until"])),
             payload=item["payload_json"],
         )
         for item in leased
     ]
-    return PullResponse(items=items, count=len(items))
+    return PullResponseContract(
+        messages=messages,
+        count=len(messages),
+        server_time=now_utc_iso(),
+    )
 
 
 @router.post("/api/ack", response_model=AckResponse)
