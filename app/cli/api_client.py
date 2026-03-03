@@ -74,5 +74,17 @@ class PullApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def pull_stats(self, *, bot_id: str | None = None) -> dict[str, Any]:
+        params: dict[str, str] | None = None
+        if bot_id is not None:
+            params = {"bot_id": bot_id}
+        resp = await self._client.get(
+            f"{self.base_url}/api/pull/stats",
+            params=params,
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.pull_api_token}"}

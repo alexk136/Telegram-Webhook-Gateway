@@ -293,6 +293,25 @@ Response:
 }
 ```
 
+## 🖥 CLI Consumer
+
+CLI находится в том же репозитории в модуле `app/cli` и запускается отдельно от сервера:
+
+```bash
+.venv/bin/python -m app.cli pull-once
+.venv/bin/python -m app.cli poll --iterations 1
+.venv/bin/python -m app.cli stats
+```
+
+Минимальные переменные окружения для CLI:
+
+```env
+PULL_API_TOKEN=change_me
+CLI_BOT_ID=123456
+TGW_BASE_URL=http://127.0.0.1:8000
+CLI_CONSUMER_ID=cli-consumer
+```
+
 ## 🧪 Local Development
 
 ### Install dependencies
