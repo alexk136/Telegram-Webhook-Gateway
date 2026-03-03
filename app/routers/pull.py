@@ -196,6 +196,7 @@ async def nack_messages(request: Request):
         message_ids=message_ids,
         consumer_id=consumer_id,
         error=error,
+        max_pull_retries=settings.MAX_PULL_RETRIES,
     )
     return NackResponse(
         ok=True,

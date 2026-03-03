@@ -58,13 +58,16 @@ async def startup():
 @app.get("/stats")
 async def stats():
     queued = 0
+    dead_count = 0
 
     if state.queue is not None:
         queued = await state.queue.count()
+        dead_count = await state.queue.count_pull_dead()
 
     uptime = int(time.time() - state.started_at)
 
     return {
         "queued": queued,
+        "dead_count": dead_count,
         "uptime_sec": uptime,
     }

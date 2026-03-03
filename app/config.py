@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = 5
     BASE_RETRY_DELAY_SEC: int = 2
     PULL_MAX_LIMIT: int = 100
+    MAX_PULL_RETRIES: int = 5
 
     OUTBOUND_SECRET: str | None = None
     BOT_CONTEXT_BY_KEY: Dict[str, str] = Field(
@@ -81,6 +82,12 @@ class Settings(BaseSettings):
                 raise ValueError("BOT_CONTEXT_BY_KEY contains empty key or bot_id")
             result[key] = bot_id
         return result
+
+    @validator("MAX_PULL_RETRIES")
+    def validate_max_pull_retries(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("MAX_PULL_RETRIES must be >= 0")
+        return v
 
     @property
     def target_urls(self) -> list[str]:

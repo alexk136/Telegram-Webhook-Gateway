@@ -2,10 +2,19 @@ import aiosqlite
 import json
 import time
 import os
+import logging
 from typing import Optional, Tuple, List, Dict, Any
 
 
 PULL_STATUSES = ("new", "leased", "acked", "dead")
+logger = logging.getLogger("pull-queue")
+
+
+def next_pull_status_after_nack(*, retry_count: int, max_pull_retries: int) -> tuple[int, str]:
+    next_retry = retry_count + 1
+    if next_retry >= max_pull_retries:
+        return next_retry, "dead"
+    return next_retry, "new"
 
 
 class SQLiteQueue:
@@ -87,6 +96,18 @@ class SQLiteQueue:
             cursor = await db.execute("SELECT COUNT(*) FROM events")
             row = await cursor.fetchone()
             return row[0]
+
+    async def count_pull_dead(self) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*)
+                FROM pull_inbox
+                WHERE status = 'dead'
+                """
+            )
+            row = await cursor.fetchone()
+            return row[0]
         
     async def increment_attempts(self, event_id: int):
         async with aiosqlite.connect(self.path) as db:
@@ -155,7 +176,7 @@ class SQLiteQueue:
             query = """
                 SELECT id
                 FROM pull_inbox
-                WHERE (status = 'new' OR (status = 'leased' AND lease_until <= ?))
+                WHERE (status = 'new' OR (status = 'leased' AND lease_until < ?))
             """
             params: List[Any] = [now]
             if bot_id is not None:
@@ -387,6 +408,7 @@ class SQLiteQueue:
         message_ids: List[int],
         consumer_id: str,
         error: Optional[str] = None,
+        max_pull_retries: int = 5,
     ) -> Dict[str, Any]:
         unique_ids: List[int] = []
         seen = set()
@@ -409,16 +431,26 @@ class SQLiteQueue:
             await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 f"""
-                SELECT id, status, consumer_id
+                SELECT id, status, consumer_id, retry_count, bot_id, telegram_update_id
                 FROM pull_inbox
                 WHERE id IN ({placeholders})
                 """,
                 tuple(unique_ids),
             )
             rows = await cursor.fetchall()
-            found = {int(row[0]): {"status": row[1], "consumer_id": row[2]} for row in rows}
+            found = {
+                int(row[0]): {
+                    "status": row[1],
+                    "consumer_id": row[2],
+                    "retry_count": int(row[3]),
+                    "bot_id": row[4],
+                    "telegram_update_id": row[5],
+                }
+                for row in rows
+            }
 
-            nacked_ids: List[int] = []
+            to_new: List[Tuple[int, int]] = []
+            to_dead: List[Tuple[int, int, str, int]] = []
             results: List[Dict[str, Any]] = []
 
             for message_id in unique_ids:
@@ -452,16 +484,32 @@ class SQLiteQueue:
                     )
                     continue
 
-                nacked_ids.append(message_id)
+                next_retry, next_status = next_pull_status_after_nack(
+                    retry_count=row["retry_count"],
+                    max_pull_retries=max_pull_retries,
+                )
+                if next_status == "dead":
+                    to_dead.append(
+                        (
+                            message_id,
+                            next_retry,
+                            str(row["bot_id"]),
+                            int(row["telegram_update_id"]),
+                        )
+                    )
+                else:
+                    to_new.append((message_id, next_retry))
 
-            if nacked_ids:
-                nack_placeholders = ",".join("?" for _ in nacked_ids)
+            if to_new:
+                nack_placeholders = ",".join("?" for _ in to_new)
+                new_ids = [item[0] for item in to_new]
+                new_retries = [item[1] for item in to_new]
                 if error is not None:
                     await db.execute(
                         f"""
                         UPDATE pull_inbox
                         SET status = 'new',
-                            retry_count = retry_count + 1,
+                            retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_new)} END,
                             consumer_id = NULL,
                             lease_until = NULL,
                             last_error = ?
@@ -469,33 +517,79 @@ class SQLiteQueue:
                           AND status = 'leased'
                           AND consumer_id = ?
                         """,
-                        (error, *nacked_ids, consumer_id),
+                        (*[v for pair in zip(new_ids, new_retries) for v in pair], error, *new_ids, consumer_id),
                     )
                 else:
                     await db.execute(
                         f"""
                         UPDATE pull_inbox
                         SET status = 'new',
-                            retry_count = retry_count + 1,
+                            retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_new)} END,
                             consumer_id = NULL,
                             lease_until = NULL
                         WHERE id IN ({nack_placeholders})
                           AND status = 'leased'
                           AND consumer_id = ?
                         """,
-                        (*nacked_ids, consumer_id),
+                        (*[v for pair in zip(new_ids, new_retries) for v in pair], *new_ids, consumer_id),
+                    )
+
+            if to_dead:
+                dead_placeholders = ",".join("?" for _ in to_dead)
+                dead_ids = [item[0] for item in to_dead]
+                dead_retries = [item[1] for item in to_dead]
+                if error is not None:
+                    await db.execute(
+                        f"""
+                        UPDATE pull_inbox
+                        SET status = 'dead',
+                            retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_dead)} END,
+                            consumer_id = NULL,
+                            lease_until = NULL,
+                            last_error = ?
+                        WHERE id IN ({dead_placeholders})
+                          AND status = 'leased'
+                          AND consumer_id = ?
+                        """,
+                        (*[v for pair in zip(dead_ids, dead_retries) for v in pair], error, *dead_ids, consumer_id),
+                    )
+                else:
+                    await db.execute(
+                        f"""
+                        UPDATE pull_inbox
+                        SET status = 'dead',
+                            retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_dead)} END,
+                            consumer_id = NULL,
+                            lease_until = NULL
+                        WHERE id IN ({dead_placeholders})
+                          AND status = 'leased'
+                          AND consumer_id = ?
+                        """,
+                        (*[v for pair in zip(dead_ids, dead_retries) for v in pair], *dead_ids, consumer_id),
                     )
 
             await db.commit()
 
-        for message_id in nacked_ids:
+        for message_id, _, _, _ in to_dead:
             results.append({"message_id": message_id, "status": "nacked"})
+        for message_id, _ in to_new:
+            results.append({"message_id": message_id, "status": "nacked"})
+
+        for message_id, retry_count, bot_id, telegram_update_id in to_dead:
+            logger.warning(
+                "pull message moved to dead: pull_message_id=%s bot_id=%s telegram_update_id=%s retry_count=%s last_error=%s",
+                message_id,
+                bot_id,
+                telegram_update_id,
+                retry_count,
+                error,
+            )
 
         results.sort(key=lambda item: item["message_id"])
 
         return {
             "requested": len(unique_ids),
-            "nacked": len(nacked_ids),
-            "skipped": len(unique_ids) - len(nacked_ids),
+            "nacked": len(to_new) + len(to_dead),
+            "skipped": len(unique_ids) - len(to_new) - len(to_dead),
             "results": results,
         }
