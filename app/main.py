@@ -50,6 +50,9 @@ async def root():
 
 @app.on_event("startup")
 async def startup():
+    if not settings.PULL_API_TOKEN:
+        raise RuntimeError("PULL_API_TOKEN must be configured for pull API")
+
     if settings.QUEUE_BACKEND == "sqlite":
         state.queue = SQLiteQueue(settings.SQLITE_PATH)
         await state.queue.init()

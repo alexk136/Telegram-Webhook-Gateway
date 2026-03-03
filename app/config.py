@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     BASE_RETRY_DELAY_SEC: int = 2
     PULL_MAX_LIMIT: int = 100
     MAX_PULL_RETRIES: int = 5
+    PULL_API_TOKEN: str | None = None
 
     OUTBOUND_SECRET: str | None = None
     BOT_CONTEXT_BY_KEY: Dict[str, str] = Field(
@@ -88,6 +89,15 @@ class Settings(BaseSettings):
         if v < 0:
             raise ValueError("MAX_PULL_RETRIES must be >= 0")
         return v
+
+    @validator("PULL_API_TOKEN")
+    def validate_pull_api_token(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        token = v.strip()
+        if not token:
+            return None
+        return token
 
     @property
     def target_urls(self) -> list[str]:

@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
 
 class PullApiClient:
-    def __init__(self, *, base_url: str, timeout_sec: float = 10.0):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        timeout_sec: float = 10.0,
+        pull_api_token: str | None = None,
+        client: httpx.AsyncClient | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=timeout_sec)
+        token = pull_api_token if pull_api_token is not None else os.getenv("PULL_API_TOKEN")
+        self.pull_api_token = (token or "").strip()
+        if not self.pull_api_token:
+            raise ValueError("PULL_API_TOKEN must be configured for PullApiClient")
+        self._client = client or httpx.AsyncClient(timeout=timeout_sec)
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -29,6 +41,7 @@ class PullApiClient:
                 "limit": limit,
                 "lease_seconds": lease_seconds,
             },
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -38,6 +51,7 @@ class PullApiClient:
         resp = await self._client.post(
             f"{self.base_url}/api/ack",
             json={"message_ids": message_ids, "consumer_id": consumer_id},
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -55,7 +69,10 @@ class PullApiClient:
         resp = await self._client.post(
             f"{self.base_url}/api/nack",
             json=payload,
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
 
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.pull_api_token}"}

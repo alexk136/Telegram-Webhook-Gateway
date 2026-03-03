@@ -1,13 +1,39 @@
 from datetime import datetime, timezone
 from typing import Any
+import secrets
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, validator
 
 import app.state as state
 from app.config import settings
 
-router = APIRouter(tags=["pull"])
+
+async def require_pull_api_auth(authorization: str | None = Header(default=None)) -> None:
+    expected = settings.PULL_API_TOKEN
+    if not expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if authorization is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    scheme, token = parts
+    if scheme != "Bearer":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    token = token.strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+router = APIRouter(tags=["pull"], dependencies=[Depends(require_pull_api_auth)])
 
 
 class PullRequest(BaseModel):
