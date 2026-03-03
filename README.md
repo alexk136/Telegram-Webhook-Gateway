@@ -135,6 +135,10 @@ BASE_RETRY_DELAY_SEC=2
 # Pull API
 PULL_API_TOKEN=change_me
 MAX_PULL_RETRIES=5
+PULL_INBOX_ACKED_RETENTION_DAYS=7
+PULL_INBOX_DEAD_RETENTION_DAYS=30
+PULL_INBOX_CLEANUP_BATCH_SIZE=1000
+PULL_INBOX_CLEANUP_INTERVAL_SEC=300
 
 # Outbound webhook signature (optional)
 OUTBOUND_SECRET=your_secret_here
@@ -157,6 +161,10 @@ OUTBOUND_SECRET=your_secret_here
 | `BASE_RETRY_DELAY_SEC` | `2` | Initial retry delay (exponential) |
 | `PULL_API_TOKEN` | — | Bearer token for `/api/pull`, `/api/ack`, `/api/nack`, `/api/pull/stats` |
 | `MAX_PULL_RETRIES` | `5` | Max pull retries before message moves to `dead` |
+| `PULL_INBOX_ACKED_RETENTION_DAYS` | `7` | Retention window for `acked` rows in `pull_inbox` |
+| `PULL_INBOX_DEAD_RETENTION_DAYS` | `30` | Retention window for `dead` rows in `pull_inbox` |
+| `PULL_INBOX_CLEANUP_BATCH_SIZE` | `1000` | Max rows deleted per cleanup iteration |
+| `PULL_INBOX_CLEANUP_INTERVAL_SEC` | `300` | Interval between automatic cleanup runs |
 | `OUTBOUND_SECRET` | — | HMAC secret for outbound signatures |
 
 ## 🔀 Multi-Target Fan-Out
@@ -259,7 +267,13 @@ Response:
 {
   "queued": 5,
   "dead_count": 1,
-  "uptime_sec": 3600
+  "uptime_sec": 3600,
+  "pull_cleanup": {
+    "last_run_at": "2026-03-03T18:10:00Z",
+    "last_deleted_acked": 120,
+    "last_deleted_dead": 8,
+    "errors_total": 0
+  }
 }
 ```
 

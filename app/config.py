@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     PULL_MAX_LIMIT: int = 100
     MAX_PULL_RETRIES: int = 5
     PULL_API_TOKEN: str | None = None
+    PULL_INBOX_ACKED_RETENTION_DAYS: int = 7
+    PULL_INBOX_DEAD_RETENTION_DAYS: int = 30
+    PULL_INBOX_CLEANUP_BATCH_SIZE: int = 1000
+    PULL_INBOX_CLEANUP_INTERVAL_SEC: int = 300
 
     OUTBOUND_SECRET: str | None = None
     BOT_CONTEXT_BY_KEY: Dict[str, str] = Field(
@@ -98,6 +102,18 @@ class Settings(BaseSettings):
         if not token:
             return None
         return token
+
+    @validator("PULL_INBOX_ACKED_RETENTION_DAYS", "PULL_INBOX_DEAD_RETENTION_DAYS")
+    def validate_pull_inbox_retention_days(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("PULL_INBOX retention days must be >= 0")
+        return v
+
+    @validator("PULL_INBOX_CLEANUP_BATCH_SIZE", "PULL_INBOX_CLEANUP_INTERVAL_SEC")
+    def validate_positive_cleanup_config(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("PULL_INBOX cleanup config values must be > 0")
+        return v
 
     @property
     def target_urls(self) -> list[str]:

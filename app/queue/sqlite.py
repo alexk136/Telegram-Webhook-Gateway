@@ -109,6 +109,92 @@ class SQLiteQueue:
             row = await cursor.fetchone()
             return row[0]
 
+    async def cleanup_acked(self, *, retention_days: int, batch_size: int) -> Dict[str, int]:
+        threshold_ts = int(time.time()) - (retention_days * 24 * 60 * 60)
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*)
+                FROM pull_inbox
+                WHERE status = 'acked'
+                  AND acked_at IS NULL
+                """
+            )
+            row = await cursor.fetchone()
+            missing_acked_at = int(row[0] or 0)
+
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                """
+                DELETE FROM pull_inbox
+                WHERE id IN (
+                    SELECT id
+                    FROM pull_inbox
+                    WHERE status = 'acked'
+                      AND acked_at IS NOT NULL
+                      AND acked_at <= ?
+                    ORDER BY acked_at ASC, id ASC
+                    LIMIT ?
+                )
+                """,
+                (threshold_ts, batch_size),
+            )
+            await db.commit()
+
+        return {
+            "deleted": int(cursor.rowcount or 0),
+            "missing_acked_at": missing_acked_at,
+            "threshold_ts": threshold_ts,
+        }
+
+    async def cleanup_dead(self, *, retention_days: int, batch_size: int) -> Dict[str, int]:
+        threshold_ts = int(time.time()) - (retention_days * 24 * 60 * 60)
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                """
+                DELETE FROM pull_inbox
+                WHERE id IN (
+                    SELECT id
+                    FROM pull_inbox
+                    WHERE status = 'dead'
+                      AND COALESCE(acked_at, received_at) <= ?
+                    ORDER BY COALESCE(acked_at, received_at) ASC, id ASC
+                    LIMIT ?
+                )
+                """,
+                (threshold_ts, batch_size),
+            )
+            await db.commit()
+
+        return {
+            "deleted": int(cursor.rowcount or 0),
+            "threshold_ts": threshold_ts,
+        }
+
+    async def run_pull_inbox_cleanup(
+        self,
+        *,
+        acked_retention_days: int,
+        dead_retention_days: int,
+        batch_size: int,
+    ) -> Dict[str, int]:
+        acked = await self.cleanup_acked(
+            retention_days=acked_retention_days,
+            batch_size=batch_size,
+        )
+        dead = await self.cleanup_dead(
+            retention_days=dead_retention_days,
+            batch_size=batch_size,
+        )
+        return {
+            "deleted_acked": acked["deleted"],
+            "deleted_dead": dead["deleted"],
+            "acked_missing_timestamp": acked["missing_acked_at"],
+            "acked_threshold_ts": acked["threshold_ts"],
+            "dead_threshold_ts": dead["threshold_ts"],
+        }
+
     async def pull_inbox_stats(self, *, bot_id: Optional[str] = None) -> Dict[str, int]:
         now = int(time.time())
         params: List[Any] = []
@@ -320,6 +406,7 @@ class SQLiteQueue:
         dead_after_retries: int,
         last_error: str,
     ) -> bool:
+        now = int(time.time())
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 """
@@ -342,11 +429,12 @@ class SQLiteQueue:
                     UPDATE pull_inbox
                     SET status = 'dead',
                         retry_count = ?,
+                        acked_at = ?,
                         lease_until = NULL,
                         last_error = ?
                     WHERE id = ?
                     """,
-                    (next_retry, last_error, inbox_id),
+                    (next_retry, now, last_error, inbox_id),
                 )
             else:
                 await db.execute(
@@ -472,6 +560,7 @@ class SQLiteQueue:
             }
 
         placeholders = ",".join("?" for _ in unique_ids)
+        now = int(time.time())
 
         async with aiosqlite.connect(self.path) as db:
             await db.execute("BEGIN IMMEDIATE")
@@ -590,6 +679,7 @@ class SQLiteQueue:
                         UPDATE pull_inbox
                         SET status = 'dead',
                             retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_dead)} END,
+                            acked_at = ?,
                             consumer_id = NULL,
                             lease_until = NULL,
                             last_error = ?
@@ -597,7 +687,13 @@ class SQLiteQueue:
                           AND status = 'leased'
                           AND consumer_id = ?
                         """,
-                        (*[v for pair in zip(dead_ids, dead_retries) for v in pair], error, *dead_ids, consumer_id),
+                        (
+                            *[v for pair in zip(dead_ids, dead_retries) for v in pair],
+                            now,
+                            error,
+                            *dead_ids,
+                            consumer_id,
+                        ),
                     )
                 else:
                     await db.execute(
@@ -605,13 +701,19 @@ class SQLiteQueue:
                         UPDATE pull_inbox
                         SET status = 'dead',
                             retry_count = CASE id {''.join(' WHEN ? THEN ?' for _ in to_dead)} END,
+                            acked_at = ?,
                             consumer_id = NULL,
                             lease_until = NULL
                         WHERE id IN ({dead_placeholders})
                           AND status = 'leased'
                           AND consumer_id = ?
                         """,
-                        (*[v for pair in zip(dead_ids, dead_retries) for v in pair], *dead_ids, consumer_id),
+                        (
+                            *[v for pair in zip(dead_ids, dead_retries) for v in pair],
+                            now,
+                            *dead_ids,
+                            consumer_id,
+                        ),
                     )
 
             await db.commit()

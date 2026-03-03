@@ -2,15 +2,20 @@ from fastapi import FastAPI
 from app.config import settings
 from app.routers.health import router as health_router
 from app.routers.pull import router as pull_router
+from app.pull_cleanup import run_pull_inbox_cleanup_once, utc_iso_or_none
 from app.webhook import telegram_webhook, telegram_webhook_by_key
 
 import asyncio
+import logging
 import time
 import app.state as state
 
 from app.queue.sqlite import SQLiteQueue
 from app.worker import worker_loop
-from app import state
+
+
+cleanup_task: asyncio.Task | None = None
+logger = logging.getLogger("app-main")
 
 
 app = FastAPI(title="Telegram Webhook Gateway")
@@ -50,13 +55,46 @@ async def root():
 
 @app.on_event("startup")
 async def startup():
+    global cleanup_task
     if not settings.PULL_API_TOKEN:
         raise RuntimeError("PULL_API_TOKEN must be configured for pull API")
 
     if settings.QUEUE_BACKEND == "sqlite":
         state.queue = SQLiteQueue(settings.SQLITE_PATH)
         await state.queue.init()
-        asyncio.create_task(worker_loop())  
+        asyncio.create_task(worker_loop())
+        cleanup_task = asyncio.create_task(_cleanup_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global cleanup_task
+    if cleanup_task is not None:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        cleanup_task = None
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            if state.queue is None:
+                await asyncio.sleep(settings.PULL_INBOX_CLEANUP_INTERVAL_SEC)
+                continue
+
+            result = await run_pull_inbox_cleanup_once(queue=state.queue)
+            state.cleanup_last_run_at = time.time()
+            state.cleanup_last_deleted_acked = int(result["deleted_acked"])
+            state.cleanup_last_deleted_dead = int(result["deleted_dead"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            state.cleanup_errors_total += 1
+            logger.exception("pull inbox cleanup iteration failed")
+        await asyncio.sleep(settings.PULL_INBOX_CLEANUP_INTERVAL_SEC)
 
 @app.get("/stats")
 async def stats():
@@ -73,4 +111,10 @@ async def stats():
         "queued": queued,
         "dead_count": dead_count,
         "uptime_sec": uptime,
+        "pull_cleanup": {
+            "last_run_at": utc_iso_or_none(state.cleanup_last_run_at),
+            "last_deleted_acked": state.cleanup_last_deleted_acked,
+            "last_deleted_dead": state.cleanup_last_deleted_dead,
+            "errors_total": state.cleanup_errors_total,
+        },
     }

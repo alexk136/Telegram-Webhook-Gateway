@@ -40,5 +40,34 @@ class PullRetryConfigTests(unittest.TestCase):
             Settings(BOT_TOKEN="123:token", MAX_PULL_RETRIES=-1)
 
 
+class PullCleanupConfigTests(unittest.TestCase):
+    def test_cleanup_retention_defaults(self):
+        settings = Settings(BOT_TOKEN="123:token")
+        self.assertEqual(settings.PULL_INBOX_ACKED_RETENTION_DAYS, 7)
+        self.assertEqual(settings.PULL_INBOX_DEAD_RETENTION_DAYS, 30)
+        self.assertEqual(settings.PULL_INBOX_CLEANUP_BATCH_SIZE, 1000)
+
+    def test_cleanup_retention_accepts_zero(self):
+        settings = Settings(
+            BOT_TOKEN="123:token",
+            PULL_INBOX_ACKED_RETENTION_DAYS=0,
+            PULL_INBOX_DEAD_RETENTION_DAYS=0,
+        )
+        self.assertEqual(settings.PULL_INBOX_ACKED_RETENTION_DAYS, 0)
+        self.assertEqual(settings.PULL_INBOX_DEAD_RETENTION_DAYS, 0)
+
+    def test_cleanup_retention_rejects_negative(self):
+        with self.assertRaises(ValueError):
+            Settings(BOT_TOKEN="123:token", PULL_INBOX_ACKED_RETENTION_DAYS=-1)
+        with self.assertRaises(ValueError):
+            Settings(BOT_TOKEN="123:token", PULL_INBOX_DEAD_RETENTION_DAYS=-1)
+
+    def test_cleanup_batch_and_interval_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            Settings(BOT_TOKEN="123:token", PULL_INBOX_CLEANUP_BATCH_SIZE=0)
+        with self.assertRaises(ValueError):
+            Settings(BOT_TOKEN="123:token", PULL_INBOX_CLEANUP_INTERVAL_SEC=0)
+
+
 if __name__ == "__main__":
     unittest.main()
