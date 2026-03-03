@@ -24,6 +24,9 @@ class CLIConfigTests(unittest.TestCase):
         self.assertEqual(cfg.consumer_id, "consumer-A")
         self.assertEqual(cfg.batch_size, 10)
         self.assertEqual(cfg.request_timeout_sec, 10.0)
+        self.assertEqual(cfg.error_backoff_initial_sec, 1.0)
+        self.assertEqual(cfg.error_backoff_max_sec, 30.0)
+        self.assertEqual(cfg.error_backoff_multiplier, 2.0)
 
     def test_cli_options_override_env(self):
         cfg = load_cli_config(
@@ -48,6 +51,12 @@ class CLIConfigTests(unittest.TestCase):
     def test_invalid_poll_interval_fails(self):
         os.environ["POLL_INTERVAL_SEC"] = "0"
         with self.assertRaisesRegex(ValueError, "POLL_INTERVAL_SEC must be > 0"):
+            load_cli_config()
+
+    def test_invalid_backoff_config_fails(self):
+        os.environ["ERROR_BACKOFF_INITIAL_SEC"] = "5"
+        os.environ["ERROR_BACKOFF_MAX_SEC"] = "1"
+        with self.assertRaisesRegex(ValueError, "ERROR_BACKOFF_MAX_SEC must be >= ERROR_BACKOFF_INITIAL_SEC"):
             load_cli_config()
 
     def test_token_is_masked(self):

@@ -109,6 +109,9 @@ class CLIMainTests(unittest.IsolatedAsyncioTestCase):
             poll_interval_sec=0.01,
             local_webhook_url="http://127.0.0.1:9000/telegram/inbox",
             request_timeout_sec=10.0,
+            error_backoff_initial_sec=1.0,
+            error_backoff_max_sec=10.0,
+            error_backoff_multiplier=2.0,
         )
         api = _FlakyApi()
         out = io.StringIO()
@@ -117,6 +120,52 @@ class CLIMainTests(unittest.IsolatedAsyncioTestCase):
                 code = await run_poll(cfg=cfg, api_client=api, iterations=2)
         self.assertEqual(code, 0)
         self.assertEqual(api.calls, 2)
+
+    async def test_run_poll_applies_backoff_and_resets_on_success(self):
+        class _FlakyApi:
+            def __init__(self):
+                self.calls = 0
+
+            async def pull_updates(self, *, bot_id, consumer_id, limit, lease_seconds):
+                self.calls += 1
+                if self.calls <= 2:
+                    raise TemporaryNetworkError("temporary")
+                return []
+
+            async def ack_updates(self, *, message_ids, consumer_id):
+                return {"ok": True}
+
+            async def nack_updates(self, *, message_ids, consumer_id, error=None):
+                return {"ok": True}
+
+        cfg = CLIConfig(
+            server_base_url="http://127.0.0.1:8000",
+            pull_api_token="tok",
+            bot_id="123456",
+            consumer_id="consumer-A",
+            batch_size=10,
+            lease_seconds=30,
+            poll_interval_sec=0.2,
+            local_webhook_url="http://127.0.0.1:9000/telegram/inbox",
+            request_timeout_sec=10.0,
+            error_backoff_initial_sec=1.0,
+            error_backoff_max_sec=5.0,
+            error_backoff_multiplier=2.0,
+        )
+        api = _FlakyApi()
+        delays: list[float] = []
+
+        async def _fake_sleep(delay):
+            delays.append(float(delay))
+
+        out = io.StringIO()
+        with patch("app.cli.main.asyncio.sleep", side_effect=_fake_sleep):
+            with redirect_stdout(out):
+                code = await run_poll(cfg=cfg, api_client=api, iterations=3)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(api.calls, 3)
+        self.assertEqual(delays, [1.0, 2.0])
 
 
 if __name__ == "__main__":

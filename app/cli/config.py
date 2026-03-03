@@ -16,6 +16,9 @@ class CLIConfig:
     poll_interval_sec: float
     local_webhook_url: str | None
     request_timeout_sec: float
+    error_backoff_initial_sec: float
+    error_backoff_max_sec: float
+    error_backoff_multiplier: float
 
     def masked_dict(self) -> dict[str, object]:
         token = self.pull_api_token
@@ -33,6 +36,9 @@ class CLIConfig:
             "POLL_INTERVAL_SEC": self.poll_interval_sec,
             "LOCAL_WEBHOOK_URL": self.local_webhook_url,
             "REQUEST_TIMEOUT_SEC": self.request_timeout_sec,
+            "ERROR_BACKOFF_INITIAL_SEC": self.error_backoff_initial_sec,
+            "ERROR_BACKOFF_MAX_SEC": self.error_backoff_max_sec,
+            "ERROR_BACKOFF_MULTIPLIER": self.error_backoff_multiplier,
         }
 
 
@@ -54,6 +60,9 @@ def load_cli_config(
     poll_interval_sec: float | None = None,
     local_webhook_url: str | None = None,
     request_timeout_sec: float | None = None,
+    error_backoff_initial_sec: float | None = None,
+    error_backoff_max_sec: float | None = None,
+    error_backoff_multiplier: float | None = None,
     require_local_webhook: bool = False,
 ) -> CLIConfig:
     server_base_url = (server_base_url or os.getenv("SERVER_BASE_URL", "")).strip()
@@ -88,6 +97,21 @@ def load_cli_config(
         if request_timeout_sec is not None
         else float(os.getenv("REQUEST_TIMEOUT_SEC", "10.0"))
     )
+    error_backoff_initial_sec = (
+        error_backoff_initial_sec
+        if error_backoff_initial_sec is not None
+        else float(os.getenv("ERROR_BACKOFF_INITIAL_SEC", "1.0"))
+    )
+    error_backoff_max_sec = (
+        error_backoff_max_sec
+        if error_backoff_max_sec is not None
+        else float(os.getenv("ERROR_BACKOFF_MAX_SEC", "30.0"))
+    )
+    error_backoff_multiplier = (
+        error_backoff_multiplier
+        if error_backoff_multiplier is not None
+        else float(os.getenv("ERROR_BACKOFF_MULTIPLIER", "2.0"))
+    )
 
     if batch_size <= 0:
         raise ValueError("BATCH_SIZE must be > 0")
@@ -97,6 +121,14 @@ def load_cli_config(
         raise ValueError("POLL_INTERVAL_SEC must be > 0")
     if request_timeout_sec <= 0:
         raise ValueError("REQUEST_TIMEOUT_SEC must be > 0")
+    if error_backoff_initial_sec <= 0:
+        raise ValueError("ERROR_BACKOFF_INITIAL_SEC must be > 0")
+    if error_backoff_max_sec <= 0:
+        raise ValueError("ERROR_BACKOFF_MAX_SEC must be > 0")
+    if error_backoff_max_sec < error_backoff_initial_sec:
+        raise ValueError("ERROR_BACKOFF_MAX_SEC must be >= ERROR_BACKOFF_INITIAL_SEC")
+    if error_backoff_multiplier < 1:
+        raise ValueError("ERROR_BACKOFF_MULTIPLIER must be >= 1")
 
     return CLIConfig(
         server_base_url=server_base_url,
@@ -108,4 +140,7 @@ def load_cli_config(
         poll_interval_sec=poll_interval_sec,
         local_webhook_url=normalized_local_webhook_url,
         request_timeout_sec=request_timeout_sec,
+        error_backoff_initial_sec=error_backoff_initial_sec,
+        error_backoff_max_sec=error_backoff_max_sec,
+        error_backoff_multiplier=error_backoff_multiplier,
     )

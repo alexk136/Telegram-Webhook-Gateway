@@ -35,6 +35,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="HTTP timeout for gateway/local webhook calls",
     )
+    parser.add_argument(
+        "--error-backoff-initial-sec",
+        dest="error_backoff_initial_sec",
+        type=float,
+        default=None,
+        help="Initial error backoff delay for poll loop",
+    )
+    parser.add_argument(
+        "--error-backoff-max-sec",
+        dest="error_backoff_max_sec",
+        type=float,
+        default=None,
+        help="Maximum error backoff delay for poll loop",
+    )
+    parser.add_argument(
+        "--error-backoff-multiplier",
+        dest="error_backoff_multiplier",
+        type=float,
+        default=None,
+        help="Backoff multiplier for repeated errors in poll loop",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -95,17 +116,22 @@ async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int
         local_timeout_sec=cfg.request_timeout_sec,
     )
     logger.info(
-        "poll started: bot_id=%s consumer_id=%s batch_size=%s lease_seconds=%s interval_sec=%s iterations=%s",
+        "poll started: bot_id=%s consumer_id=%s batch_size=%s lease_seconds=%s interval_sec=%s iterations=%s backoff_initial=%s backoff_max=%s backoff_multiplier=%s",
         cfg.bot_id,
         cfg.consumer_id,
         cfg.batch_size,
         cfg.lease_seconds,
         cfg.poll_interval_sec,
         iterations,
+        cfg.error_backoff_initial_sec,
+        cfg.error_backoff_max_sec,
+        cfg.error_backoff_multiplier,
     )
 
     current = 0
+    current_backoff = cfg.error_backoff_initial_sec
     while True:
+        sleep_delay = cfg.poll_interval_sec
         try:
             items = await api_client.pull_updates(
                 bot_id=cfg.bot_id,
@@ -118,17 +144,44 @@ async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int
             else:
                 logger.info("poll iteration=%s: pulled=%s", current + 1, len(items))
                 await poller.process_batch(items)
+            current_backoff = cfg.error_backoff_initial_sec
+        except AuthorizationError as exc:
+            sleep_delay = current_backoff
+            logger.error("poll iteration=%s pull_api_auth_error=%s", current + 1, exc)
+            logger.warning("backoff_applied delay_sec=%s", sleep_delay)
+            current_backoff = min(
+                cfg.error_backoff_max_sec,
+                current_backoff * cfg.error_backoff_multiplier,
+            )
         except TemporaryNetworkError as exc:
+            sleep_delay = current_backoff
             logger.warning("poll iteration=%s temporary network error: %s", current + 1, exc)
+            logger.warning("backoff_applied delay_sec=%s", sleep_delay)
+            current_backoff = min(
+                cfg.error_backoff_max_sec,
+                current_backoff * cfg.error_backoff_multiplier,
+            )
         except GatewayApiClientError as exc:
+            sleep_delay = current_backoff
             logger.error("poll iteration=%s gateway api error: %s", current + 1, exc)
+            logger.warning("backoff_applied delay_sec=%s", sleep_delay)
+            current_backoff = min(
+                cfg.error_backoff_max_sec,
+                current_backoff * cfg.error_backoff_multiplier,
+            )
         except Exception:
+            sleep_delay = current_backoff
             logger.exception("poll iteration=%s unexpected error", current + 1)
+            logger.warning("backoff_applied delay_sec=%s", sleep_delay)
+            current_backoff = min(
+                cfg.error_backoff_max_sec,
+                current_backoff * cfg.error_backoff_multiplier,
+            )
 
         current += 1
         if iterations > 0 and current >= iterations:
             break
-        await asyncio.sleep(cfg.poll_interval_sec)
+        await asyncio.sleep(sleep_delay)
 
     print(
         json.dumps(
@@ -156,6 +209,9 @@ async def _main_async(argv: list[str] | None = None) -> int:
         poll_interval_sec=getattr(args, "poll_interval_sec", None),
         local_webhook_url=getattr(args, "local_webhook_url", None),
         request_timeout_sec=args.request_timeout_sec,
+        error_backoff_initial_sec=args.error_backoff_initial_sec,
+        error_backoff_max_sec=args.error_backoff_max_sec,
+        error_backoff_multiplier=args.error_backoff_multiplier,
         require_local_webhook=args.command == "poll" or (
             args.command == "pull-once" and bool(getattr(args, "forward", False))
         ),

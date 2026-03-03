@@ -30,6 +30,9 @@ class PullOnceCommandTests(unittest.IsolatedAsyncioTestCase):
             poll_interval_sec=2.0,
             local_webhook_url=local_webhook_url,
             request_timeout_sec=10.0,
+            error_backoff_initial_sec=1.0,
+            error_backoff_max_sec=30.0,
+            error_backoff_multiplier=2.0,
         )
 
     async def test_pull_once_print_mode_uses_single_pull(self):
