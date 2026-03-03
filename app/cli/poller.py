@@ -67,12 +67,11 @@ class PullBridgePoller:
         message_id = int(msg["id"])
         bot_id = str(msg.get("bot_id", ""))
         telegram_update_id = msg.get("telegram_update_id")
-        payload = msg.get("payload", {})
 
         forward_result = await forward_to_local_webhook(
             client=local_client,
             local_webhook_url=self.local_webhook_url,
-            payload=payload,
+            msg=msg,
         )
 
         if forward_result.success:
@@ -125,4 +124,3 @@ class PullBridgePoller:
         except Exception:
             logger.exception("NACK failed for pull_message_id=%s", message_id)
             return False
-

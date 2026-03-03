@@ -26,10 +26,21 @@ async def forward_to_local_webhook(
     *,
     client: httpx.AsyncClient,
     local_webhook_url: str,
-    payload: dict[str, Any],
+    msg: dict[str, Any],
 ) -> ForwardResult:
+    update = msg.get("payload")
+    if not isinstance(update, dict):
+        update = {}
+
+    body = {
+        "bot_id": msg.get("bot_id"),
+        "telegram_update_id": msg.get("telegram_update_id"),
+        "pull_message_id": msg.get("id"),
+        "update": update,
+    }
+
     try:
-        resp = await client.post(local_webhook_url, json=payload)
+        resp = await client.post(local_webhook_url, json=body)
     except Exception as exc:
         return ForwardResult(
             success=False,
@@ -48,4 +59,3 @@ async def forward_to_local_webhook(
             f"response_body_snippet={snippet}"
         ),
     )
-

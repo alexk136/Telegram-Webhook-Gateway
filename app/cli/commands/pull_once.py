@@ -62,11 +62,10 @@ async def run_pull_once_command(*, cfg: CLIConfig, api_client: Any, forward: boo
     has_failures = False
     async with httpx.AsyncClient(timeout=cfg.request_timeout_sec) as local_client:
         for item, view in zip(items, views):
-            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
             fr = await forward_to_local_webhook(
                 client=local_client,
                 local_webhook_url=cfg.local_webhook_url,
-                payload=payload,
+                msg=item,
             )
             result = {
                 **view,
