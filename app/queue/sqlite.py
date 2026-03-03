@@ -297,3 +297,205 @@ class SQLiteQueue:
 
             await db.commit()
             return True
+
+    async def ack_pull_batch(
+        self,
+        *,
+        message_ids: List[int],
+        consumer_id: str,
+    ) -> Dict[str, Any]:
+        unique_ids: List[int] = []
+        seen = set()
+        for message_id in message_ids:
+            if message_id not in seen:
+                unique_ids.append(message_id)
+                seen.add(message_id)
+
+        if not unique_ids:
+            return {
+                "acked_ids": [],
+                "already_acked_ids": [],
+                "rejected": [],
+            }
+
+        now = int(time.time())
+        placeholders = ",".join("?" for _ in unique_ids)
+
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                f"""
+                SELECT id, status, consumer_id
+                FROM pull_inbox
+                WHERE id IN ({placeholders})
+                """,
+                tuple(unique_ids),
+            )
+            rows = await cursor.fetchall()
+            found = {int(row[0]): {"status": row[1], "consumer_id": row[2]} for row in rows}
+
+            ack_candidates: List[int] = []
+            already_acked_ids: List[int] = []
+            rejected: List[Dict[str, Any]] = []
+
+            for message_id in unique_ids:
+                row = found.get(message_id)
+                if row is None:
+                    rejected.append({"message_id": message_id, "reason": "not_found"})
+                    continue
+
+                status = row["status"]
+                row_consumer_id = row["consumer_id"]
+
+                if status == "acked":
+                    already_acked_ids.append(message_id)
+                elif status == "leased":
+                    if row_consumer_id != consumer_id:
+                        rejected.append({"message_id": message_id, "reason": "consumer_mismatch"})
+                    else:
+                        ack_candidates.append(message_id)
+                elif status == "dead":
+                    rejected.append({"message_id": message_id, "reason": "invalid_state_dead"})
+                else:
+                    rejected.append({"message_id": message_id, "reason": f"invalid_state_{status}"})
+
+            if ack_candidates:
+                ack_placeholders = ",".join("?" for _ in ack_candidates)
+                await db.execute(
+                    f"""
+                    UPDATE pull_inbox
+                    SET status = 'acked',
+                        acked_at = ?,
+                        lease_until = NULL
+                    WHERE id IN ({ack_placeholders})
+                      AND status = 'leased'
+                      AND consumer_id = ?
+                    """,
+                    (now, *ack_candidates, consumer_id),
+                )
+
+            await db.commit()
+            return {
+                "acked_ids": ack_candidates,
+                "already_acked_ids": already_acked_ids,
+                "rejected": rejected,
+            }
+
+    async def nack_pull_batch(
+        self,
+        *,
+        message_ids: List[int],
+        consumer_id: str,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        unique_ids: List[int] = []
+        seen = set()
+        for message_id in message_ids:
+            if message_id not in seen:
+                unique_ids.append(message_id)
+                seen.add(message_id)
+
+        if not unique_ids:
+            return {
+                "requested": 0,
+                "nacked": 0,
+                "skipped": 0,
+                "results": [],
+            }
+
+        placeholders = ",".join("?" for _ in unique_ids)
+
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                f"""
+                SELECT id, status, consumer_id
+                FROM pull_inbox
+                WHERE id IN ({placeholders})
+                """,
+                tuple(unique_ids),
+            )
+            rows = await cursor.fetchall()
+            found = {int(row[0]): {"status": row[1], "consumer_id": row[2]} for row in rows}
+
+            nacked_ids: List[int] = []
+            results: List[Dict[str, Any]] = []
+
+            for message_id in unique_ids:
+                row = found.get(message_id)
+                if row is None:
+                    results.append(
+                        {"message_id": message_id, "status": "skipped", "reason": "not_found"}
+                    )
+                    continue
+
+                status = row["status"]
+                row_consumer_id = row["consumer_id"]
+
+                if status != "leased":
+                    results.append(
+                        {
+                            "message_id": message_id,
+                            "status": "skipped",
+                            "reason": f"invalid_state_{status}",
+                        }
+                    )
+                    continue
+
+                if row_consumer_id != consumer_id:
+                    results.append(
+                        {
+                            "message_id": message_id,
+                            "status": "skipped",
+                            "reason": "consumer_mismatch",
+                        }
+                    )
+                    continue
+
+                nacked_ids.append(message_id)
+
+            if nacked_ids:
+                nack_placeholders = ",".join("?" for _ in nacked_ids)
+                if error is not None:
+                    await db.execute(
+                        f"""
+                        UPDATE pull_inbox
+                        SET status = 'new',
+                            retry_count = retry_count + 1,
+                            consumer_id = NULL,
+                            lease_until = NULL,
+                            last_error = ?
+                        WHERE id IN ({nack_placeholders})
+                          AND status = 'leased'
+                          AND consumer_id = ?
+                        """,
+                        (error, *nacked_ids, consumer_id),
+                    )
+                else:
+                    await db.execute(
+                        f"""
+                        UPDATE pull_inbox
+                        SET status = 'new',
+                            retry_count = retry_count + 1,
+                            consumer_id = NULL,
+                            lease_until = NULL
+                        WHERE id IN ({nack_placeholders})
+                          AND status = 'leased'
+                          AND consumer_id = ?
+                        """,
+                        (*nacked_ids, consumer_id),
+                    )
+
+            await db.commit()
+
+        for message_id in nacked_ids:
+            results.append({"message_id": message_id, "status": "nacked"})
+
+        results.sort(key=lambda item: item["message_id"])
+
+        return {
+            "requested": len(unique_ids),
+            "nacked": len(nacked_ids),
+            "skipped": len(unique_ids) - len(nacked_ids),
+            "results": results,
+        }

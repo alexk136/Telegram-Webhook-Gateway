@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, validator
 
 import app.state as state
@@ -37,6 +37,32 @@ class PullItem(BaseModel):
 class PullResponse(BaseModel):
     items: list[PullItem]
     count: int
+
+
+class AckRejected(BaseModel):
+    message_id: int
+    reason: str
+
+
+class AckResponse(BaseModel):
+    ok: bool
+    acked_ids: list[int]
+    already_acked_ids: list[int]
+    rejected: list[AckRejected]
+
+
+class NackResultItem(BaseModel):
+    message_id: int
+    status: str
+    reason: str | None = None
+
+
+class NackResponse(BaseModel):
+    ok: bool
+    requested: int
+    nacked: int
+    skipped: int
+    results: list[NackResultItem]
 
 
 def _to_utc_iso(ts: int) -> str:
@@ -75,3 +101,106 @@ async def pull_messages(payload: PullRequest):
         for item in leased
     ]
     return PullResponse(items=items, count=len(items))
+
+
+@router.post("/api/ack", response_model=AckResponse)
+async def ack_messages(request: Request):
+    if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
+        raise HTTPException(status_code=503, detail="Queue backend is not available")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
+
+    if "consumer_id" not in payload:
+        raise HTTPException(status_code=400, detail="consumer_id is required")
+    if "message_ids" not in payload:
+        raise HTTPException(status_code=400, detail="message_ids is required")
+
+    consumer_id = str(payload["consumer_id"]).strip()
+    if not consumer_id:
+        raise HTTPException(status_code=400, detail="consumer_id must not be empty")
+
+    message_ids_raw = payload["message_ids"]
+    if not isinstance(message_ids_raw, list) or not message_ids_raw:
+        raise HTTPException(status_code=400, detail="message_ids must be a non-empty array")
+
+    message_ids: list[int] = []
+    for item in message_ids_raw:
+        if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="message_ids must contain positive integer IDs",
+            )
+        message_ids.append(item)
+
+    result = await state.queue.ack_pull_batch(
+        message_ids=message_ids,
+        consumer_id=consumer_id,
+    )
+    return AckResponse(
+        ok=True,
+        acked_ids=result["acked_ids"],
+        already_acked_ids=result["already_acked_ids"],
+        rejected=[AckRejected(**item) for item in result["rejected"]],
+    )
+
+
+@router.post("/api/nack", response_model=NackResponse)
+async def nack_messages(request: Request):
+    if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
+        raise HTTPException(status_code=503, detail="Queue backend is not available")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
+
+    if "consumer_id" not in payload:
+        raise HTTPException(status_code=400, detail="consumer_id is required")
+    if "message_ids" not in payload:
+        raise HTTPException(status_code=400, detail="message_ids is required")
+
+    consumer_id = str(payload["consumer_id"]).strip()
+    if not consumer_id:
+        raise HTTPException(status_code=400, detail="consumer_id must not be empty")
+
+    message_ids_raw = payload["message_ids"]
+    if not isinstance(message_ids_raw, list) or not message_ids_raw:
+        raise HTTPException(status_code=400, detail="message_ids must be a non-empty array")
+
+    message_ids: list[int] = []
+    for item in message_ids_raw:
+        if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="message_ids must contain positive integer IDs",
+            )
+        message_ids.append(item)
+
+    error_raw = payload.get("error")
+    error: str | None = None
+    if error_raw is not None:
+        error = str(error_raw).strip()
+        if not error:
+            error = None
+
+    result = await state.queue.nack_pull_batch(
+        message_ids=message_ids,
+        consumer_id=consumer_id,
+        error=error,
+    )
+    return NackResponse(
+        ok=True,
+        requested=result["requested"],
+        nacked=result["nacked"],
+        skipped=result["skipped"],
+        results=[NackResultItem(**item) for item in result["results"]],
+    )
