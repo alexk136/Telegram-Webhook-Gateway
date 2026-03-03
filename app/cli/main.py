@@ -5,7 +5,14 @@ import asyncio
 import json
 import logging
 
-from app.cli.api_client import ClientConfigError, PullApiClient
+from app.cli.api_client import (
+    AuthorizationError,
+    ClientConfigError,
+    GatewayApiClientError,
+    PullApiClient,
+    TemporaryNetworkError,
+)
+from app.cli.commands.pull_once import run_pull_once_command
 from app.cli.config import CLIConfig, load_cli_config
 from app.cli.poller import PullBridgePoller
 
@@ -31,7 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("pull-once", help="Pull one batch and print summary")
+    pull_once_parser = subparsers.add_parser("pull-once", help="Pull one batch and print summary")
+    pull_once_parser.add_argument(
+        "--forward",
+        action="store_true",
+        help="Forward pulled messages to LOCAL_WEBHOOK_URL instead of printing only",
+    )
 
     stats_parser = subparsers.add_parser("stats", help="Show pull queue stats")
     stats_parser.add_argument("--stats-bot-id", dest="stats_bot_id", default=None, help="Optional stats bot filter")
@@ -61,14 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run_pull_once(*, cfg: CLIConfig, api_client: PullApiClient) -> int:
-    items = await api_client.pull_updates(
-        bot_id=cfg.bot_id,
-        consumer_id=cfg.consumer_id,
-        limit=cfg.batch_size,
-        lease_seconds=cfg.lease_seconds,
-    )
-    print(json.dumps({"command": "pull-once", "count": len(items)}))
-    return 0
+    return await run_pull_once_command(cfg=cfg, api_client=api_client, forward=False)
 
 
 async def run_stats(*, api_client: PullApiClient, stats_bot_id: str | None) -> int:
@@ -130,7 +135,9 @@ async def _main_async(argv: list[str] | None = None) -> int:
         poll_interval_sec=getattr(args, "poll_interval_sec", None),
         local_webhook_url=getattr(args, "local_webhook_url", None),
         request_timeout_sec=args.request_timeout_sec,
-        require_local_webhook=args.command == "poll",
+        require_local_webhook=args.command == "poll" or (
+            args.command == "pull-once" and bool(getattr(args, "forward", False))
+        ),
     )
     logger.info("CLI config: %s", cfg.masked_dict())
 
@@ -141,7 +148,11 @@ async def _main_async(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "pull-once":
-            return await run_pull_once(cfg=cfg, api_client=api_client)
+            return await run_pull_once_command(
+                cfg=cfg,
+                api_client=api_client,
+                forward=bool(getattr(args, "forward", False)),
+            )
         if args.command == "stats":
             return await run_stats(api_client=api_client, stats_bot_id=args.stats_bot_id)
         if args.command == "poll":
@@ -158,6 +169,15 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, ClientConfigError) as exc:
         logger.error("Configuration error: %s", exc)
         return 2
+    except AuthorizationError as exc:
+        logger.error("Authorization error: %s", exc)
+        return 3
+    except TemporaryNetworkError as exc:
+        logger.error("Temporary network error: %s", exc)
+        return 4
+    except GatewayApiClientError as exc:
+        logger.error("Gateway API error: %s", exc)
+        return 5
 
 
 if __name__ == "__main__":

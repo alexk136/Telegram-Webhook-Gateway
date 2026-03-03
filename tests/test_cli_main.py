@@ -13,8 +13,10 @@ class _FakeApiClient:
         self.pull_api_token = pull_api_token
         self.timeout_sec = timeout_sec
         self.closed = False
+        self.pull_calls = 0
 
     async def pull_updates(self, *, bot_id, consumer_id, limit, lease_seconds):
+        self.pull_calls += 1
         return [{"id": 1}] if limit > 0 else []
 
     async def pull_stats(self, *, bot_id=None):
@@ -47,6 +49,8 @@ class CLIMainTests(unittest.IsolatedAsyncioTestCase):
         parser = build_parser()
         args = parser.parse_args(["pull-once"])
         self.assertEqual(args.command, "pull-once")
+        args = parser.parse_args(["pull-once", "--forward"])
+        self.assertTrue(args.forward)
         args = parser.parse_args(["poll"])
         self.assertEqual(args.command, "poll")
         args = parser.parse_args(["stats"])

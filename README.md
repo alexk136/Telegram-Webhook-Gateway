@@ -299,6 +299,7 @@ CLI находится в том же репозитории в модуле `ap
 
 ```bash
 .venv/bin/python -m app.cli pull-once
+.venv/bin/python -m app.cli pull-once --forward
 .venv/bin/python -m app.cli poll --iterations 1
 .venv/bin/python -m app.cli stats
 ```
