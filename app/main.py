@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.config import settings
 from app.routers.health import router as health_router
-from app.webhook import telegram_webhook
+from app.webhook import telegram_webhook, telegram_webhook_by_key
 
 import asyncio
 import time
@@ -16,11 +16,25 @@ app = FastAPI(title="Telegram Webhook Gateway")
 
 app.include_router(health_router)
 
-app.add_api_route(
-    settings.TELEGRAM_WEBHOOK_PATH,
-    telegram_webhook,
-    methods=["POST"],
-)
+if "{bot_key}" in settings.TELEGRAM_WEBHOOK_PATH:
+    app.add_api_route(
+        settings.TELEGRAM_WEBHOOK_PATH,
+        telegram_webhook_by_key,
+        methods=["POST"],
+    )
+else:
+    app.add_api_route(
+        settings.TELEGRAM_WEBHOOK_PATH,
+        telegram_webhook,
+        methods=["POST"],
+    )
+
+    webhook_path_by_key = f"{settings.TELEGRAM_WEBHOOK_PATH.rstrip('/')}/{{bot_key}}"
+    app.add_api_route(
+        webhook_path_by_key,
+        telegram_webhook_by_key,
+        methods=["POST"],
+    )
 
 
 @app.get("/")
