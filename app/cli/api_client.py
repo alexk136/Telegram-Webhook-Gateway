@@ -140,16 +140,29 @@ class GatewayApiClient:
         return data
 
     async def get_stats(self, *, bot_id: str | None = None) -> dict[str, Any]:
+        return await self.get_stats_with_meta(bot_id=bot_id)
+
+    async def get_stats_with_meta(self, *, bot_id: str | None = None) -> dict[str, Any]:
         params: dict[str, str] | None = None
         if bot_id is not None:
             params = {"bot_id": bot_id}
-        data = await self._request("GET", "/api/pull/stats", params=params)
+        try:
+            data = await self._request("GET", "/api/pull/stats", params=params)
+            endpoint = "/api/pull/stats"
+        except NonRetryableHttpError as exc:
+            if exc.status_code != 404:
+                raise
+            data = await self._request("GET", "/stats")
+            endpoint = "/stats"
+
         if not isinstance(data, dict):
-            raise ResponseParseError("/api/pull/stats response must be a JSON object")
-        return data
+            raise ResponseParseError(f"{endpoint} response must be a JSON object")
+        normalized = dict(data)
+        normalized["_meta"] = {"endpoint": endpoint, "reachable": True, "auth": "ok"}
+        return normalized
 
     async def pull_stats(self, *, bot_id: str | None = None) -> dict[str, Any]:
-        return await self.get_stats(bot_id=bot_id)
+        return await self.get_stats_with_meta(bot_id=bot_id)
 
     async def _request(
         self,

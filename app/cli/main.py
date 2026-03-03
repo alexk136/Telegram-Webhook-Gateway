@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats_parser = subparsers.add_parser("stats", help="Show pull queue stats")
     stats_parser.add_argument("--stats-bot-id", dest="stats_bot_id", default=None, help="Optional stats bot filter")
+    stats_parser.add_argument("--json", dest="stats_json", action="store_true", help="Output stats as JSON")
 
     poll_parser = subparsers.add_parser("poll", help="Run polling loop")
     poll_parser.add_argument(
@@ -97,9 +98,82 @@ async def run_pull_once(*, cfg: CLIConfig, api_client: PullApiClient) -> int:
     return await run_pull_once_command(cfg=cfg, api_client=api_client, forward=False)
 
 
-async def run_stats(*, api_client: PullApiClient, stats_bot_id: str | None) -> int:
-    data = await api_client.pull_stats(bot_id=stats_bot_id)
-    print(json.dumps(data))
+def _fmt_num(value: object) -> str:
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+async def run_stats(
+    *,
+    cfg: CLIConfig,
+    api_client: PullApiClient,
+    stats_bot_id: str | None,
+    as_json: bool,
+) -> int:
+    if hasattr(api_client, "get_stats_with_meta"):
+        data = await api_client.get_stats_with_meta(bot_id=stats_bot_id)
+    else:
+        data = await api_client.pull_stats(bot_id=stats_bot_id)
+        data = {**data, "_meta": {"endpoint": "/api/pull/stats", "reachable": True, "auth": "ok"}}
+
+    pull_inbox = data.get("pull_inbox") if isinstance(data.get("pull_inbox"), dict) else {}
+    if not pull_inbox:
+        pull_inbox = {
+            "new_count": None,
+            "leased_count": None,
+            "acked_count": None,
+            "dead_count": data.get("dead_count"),
+            "expired_leases": None,
+        }
+
+    endpoint = data.get("_meta", {}).get("endpoint", "unknown")
+    auth = data.get("_meta", {}).get("auth", "unknown")
+
+    if as_json:
+        output = {
+            "server": {
+                "reachable": True,
+                "endpoint": endpoint,
+                "auth": auth,
+            },
+            "queue": {
+                "new_count": pull_inbox.get("new_count"),
+                "leased_count": pull_inbox.get("leased_count"),
+                "acked_count": pull_inbox.get("acked_count"),
+                "dead_count": pull_inbox.get("dead_count"),
+                "expired_leases": pull_inbox.get("expired_leases"),
+            },
+            "consumer": {
+                "consumer_id": cfg.consumer_id,
+                "bot_id": cfg.bot_id,
+                "poll_interval_sec": cfg.poll_interval_sec,
+                "batch_size": cfg.batch_size,
+                "lease_seconds": cfg.lease_seconds,
+            },
+            "forward": {"local_webhook_url": cfg.local_webhook_url},
+        }
+        print(json.dumps(output))
+        return 0
+
+    print(f"server: reachable endpoint={endpoint} auth={auth}")
+    print(
+        "queue: "
+        f"new={_fmt_num(pull_inbox.get('new_count'))}, "
+        f"leased={_fmt_num(pull_inbox.get('leased_count'))}, "
+        f"acked={_fmt_num(pull_inbox.get('acked_count'))}, "
+        f"dead={_fmt_num(pull_inbox.get('dead_count'))}, "
+        f"expired_leases={_fmt_num(pull_inbox.get('expired_leases'))}"
+    )
+    print(
+        "consumer: "
+        f"consumer_id={cfg.consumer_id}, "
+        f"BOT_ID={cfg.bot_id}, "
+        f"poll_interval_sec={cfg.poll_interval_sec}, "
+        f"batch_size={cfg.batch_size}, "
+        f"lease_seconds={cfg.lease_seconds}"
+    )
+    print(f"forward: {cfg.local_webhook_url}")
     return 0
 
 
@@ -231,7 +305,12 @@ async def _main_async(argv: list[str] | None = None) -> int:
                 forward=bool(getattr(args, "forward", False)),
             )
         if args.command == "stats":
-            return await run_stats(api_client=api_client, stats_bot_id=args.stats_bot_id)
+            return await run_stats(
+                cfg=cfg,
+                api_client=api_client,
+                stats_bot_id=args.stats_bot_id,
+                as_json=bool(getattr(args, "stats_json", False)),
+            )
         if args.command == "poll":
             return await run_poll(cfg=cfg, api_client=api_client, iterations=args.iterations)
         raise RuntimeError(f"Unknown command: {args.command}")

@@ -77,7 +77,7 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         await client.ack_updates(message_ids=[1, 2], consumer_id="consumer-A")
         await client.nack_update(message_id=1, consumer_id="consumer-A", error="boom")
         await client.nack_updates(message_ids=[1, 2], consumer_id="consumer-A")
-        await client.get_stats(bot_id="123456")
+        stats = await client.get_stats(bot_id="123456")
 
         self.assertEqual(len(fake.calls), 6)
         self.assertTrue(all(c["headers"].get("Authorization") == "Bearer tok-123" for c in fake.calls))
@@ -87,6 +87,25 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake.calls[2]["json"]["message_ids"], [1, 2])
         self.assertEqual(fake.calls[3]["json"]["error"], "boom")
         self.assertEqual(fake.calls[5]["params"], {"bot_id": "123456"})
+        self.assertEqual(stats["_meta"]["endpoint"], "/api/pull/stats")
+
+    async def test_stats_fallback_to_root_stats_on_404(self):
+        fake = _FakeAsyncClient(
+            [
+                _text_response(404, "not found"),
+                _json_response(200, {"queued": 3, "dead_count": 1, "uptime_sec": 10}),
+            ]
+        )
+        client = GatewayApiClient(
+            base_url="http://localhost:8080",
+            pull_api_token="tok",
+            client=fake,
+            max_http_retries=0,
+        )
+        stats = await client.get_stats()
+        self.assertEqual(stats["_meta"]["endpoint"], "/stats")
+        self.assertEqual(stats["queued"], 3)
+        self.assertEqual(len(fake.calls), 2)
 
     async def test_retry_on_timeout_then_success(self):
         req = httpx.Request("POST", "http://localhost:8080/api/pull")

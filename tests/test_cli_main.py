@@ -24,6 +24,19 @@ class _FakeApiClient:
     async def pull_stats(self, *, bot_id=None):
         return {"pull_inbox": {"bot_id": bot_id, "new_count": 1}, "generated_at": "2026-03-03T00:00:00Z"}
 
+    async def get_stats_with_meta(self, *, bot_id=None):
+        return {
+            "pull_inbox": {
+                "bot_id": bot_id,
+                "new_count": 1,
+                "leased_count": 0,
+                "acked_count": 2,
+                "dead_count": 0,
+                "expired_leases": 0,
+            },
+            "_meta": {"endpoint": "/api/pull/stats", "reachable": True, "auth": "ok"},
+        }
+
     async def ack_updates(self, *, message_ids, consumer_id):
         return {"ok": True}
 
@@ -72,7 +85,17 @@ class CLIMainTests(unittest.IsolatedAsyncioTestCase):
             with redirect_stdout(out):
                 code = await _main_async(["stats"])
         self.assertEqual(code, 0)
-        self.assertIn('"pull_inbox"', out.getvalue())
+        self.assertIn("server: reachable", out.getvalue())
+        self.assertIn("BOT_ID=123456", out.getvalue())
+
+    async def test_stats_json_output(self):
+        with patch("app.cli.main.PullApiClient", _FakeApiClient):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = await _main_async(["stats", "--json"])
+        self.assertEqual(code, 0)
+        self.assertIn('"server"', out.getvalue())
+        self.assertIn('"queue"', out.getvalue())
 
     async def test_poll_command_dispatches(self):
         with patch("app.cli.main.PullApiClient", _FakeApiClient):
