@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from app.contracts.local_webhook import build_local_webhook_payload
+
 
 SUCCESS_HTTP_CODES = {200, 201, 202, 204}
 
@@ -28,19 +30,20 @@ async def forward_to_local_webhook(
     local_webhook_url: str,
     msg: dict[str, Any],
 ) -> ForwardResult:
-    update = msg.get("payload")
-    if not isinstance(update, dict):
-        update = {}
-
-    body = {
-        "bot_id": msg.get("bot_id"),
-        "telegram_update_id": msg.get("telegram_update_id"),
-        "pull_message_id": msg.get("id"),
-        "update": update,
-    }
+    try:
+        body = build_local_webhook_payload(msg).model_dump()
+    except Exception as exc:
+        return ForwardResult(
+            success=False,
+            error=f"invalid_forward_payload={str(exc)}",
+        )
 
     try:
-        resp = await client.post(local_webhook_url, json=body)
+        resp = await client.post(
+            local_webhook_url,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        )
     except Exception as exc:
         return ForwardResult(
             success=False,

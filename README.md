@@ -372,6 +372,38 @@ ERROR_BACKOFF_MAX_SEC=30.0
 ERROR_BACKOFF_MULTIPLIER=2.0
 ```
 
+### Local Webhook Contract (`LOCAL_WEBHOOK_URL`)
+
+CLI bridge всегда отправляет `POST` с `Content-Type: application/json` на `LOCAL_WEBHOOK_URL` в формате:
+
+```json
+{
+  "bot_id": "123456",
+  "telegram_update_id": 987654321,
+  "pull_message_id": 101,
+  "update": {
+    "update_id": 987654321,
+    "message": {
+      "text": "hello"
+    }
+  }
+}
+```
+
+Семантика полей:
+- `bot_id`: идентификатор бота для маршрутизации и изоляции контекста.
+- `telegram_update_id`: внешний идентификатор Telegram update.
+- `pull_message_id`: внутренний id записи pull-очереди для трассировки.
+- `update`: полный Telegram update как JSON-объект.
+
+Идемпотентность локального обработчика:
+- Рекомендуемый ключ: `bot_id + telegram_update_id`.
+- Повторная доставка возможна при lease expiry, сетевых сбоях, позднем `ack`; локальный обработчик должен безопасно отбрасывать дубль.
+
+Коды успешного приёма локальным webhook:
+- `200`, `201`, `202`, `204` => CLI считает сообщение принятым и выполняет `ack`.
+- Любой `4xx/5xx`, timeout или transport error => CLI считает доставку неуспешной и выполняет `nack`/retry-поведение.
+
 ## 🧪 Local Development
 
 ### Install dependencies
