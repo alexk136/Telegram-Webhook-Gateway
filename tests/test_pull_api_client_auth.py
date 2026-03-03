@@ -1,4 +1,3 @@
-import os
 import unittest
 
 from app.cli.api_client import PullApiClient
@@ -20,12 +19,16 @@ class _FakeAsyncClient:
         self.calls = []
 
     async def post(self, url, json=None, headers=None):
-        self.calls.append({"url": url, "json": json, "headers": headers or {}})
+        self.calls.append({"method": "POST", "url": url, "json": json, "headers": headers or {}})
         if url.endswith("/api/pull"):
             return _FakeResponse({"items": []})
         if url.endswith("/api/ack"):
             return _FakeResponse({"ok": True})
         return _FakeResponse({"ok": True})
+
+    async def get(self, url, params=None, headers=None):
+        self.calls.append({"method": "GET", "url": url, "params": params, "headers": headers or {}})
+        return _FakeResponse({"pull_inbox": {"new_count": 0}, "generated_at": "2026-03-03T00:00:00Z"})
 
     async def aclose(self):
         return None
@@ -48,41 +51,15 @@ class PullApiClientAuthTests(unittest.IsolatedAsyncioTestCase):
         )
         await client.ack_updates(message_ids=[1], consumer_id="consumer-A")
         await client.nack_updates(message_ids=[1], consumer_id="consumer-A", error="boom")
+        await client.pull_stats(bot_id="123456")
 
-        self.assertEqual(len(fake_client.calls), 3)
+        self.assertEqual(len(fake_client.calls), 4)
         for call in fake_client.calls:
             self.assertEqual(call["headers"].get("Authorization"), "Bearer tok-123")
 
-    async def test_client_reads_token_from_env(self):
-        old = os.environ.get("PULL_API_TOKEN")
-        os.environ["PULL_API_TOKEN"] = "env-token"
-        try:
-            fake_client = _FakeAsyncClient()
-            client = PullApiClient(
-                base_url="http://localhost:8080",
-                client=fake_client,
-            )
-            await client.ack_updates(message_ids=[1], consumer_id="consumer-A")
-            self.assertEqual(
-                fake_client.calls[0]["headers"].get("Authorization"),
-                "Bearer env-token",
-            )
-        finally:
-            if old is None:
-                os.environ.pop("PULL_API_TOKEN", None)
-            else:
-                os.environ["PULL_API_TOKEN"] = old
-
     def test_client_requires_token(self):
-        old = os.environ.get("PULL_API_TOKEN")
-        if "PULL_API_TOKEN" in os.environ:
-            del os.environ["PULL_API_TOKEN"]
-        try:
-            with self.assertRaises(ValueError):
-                PullApiClient(base_url="http://localhost:8080")
-        finally:
-            if old is not None:
-                os.environ["PULL_API_TOKEN"] = old
+        with self.assertRaises(TypeError):
+            PullApiClient(base_url="http://localhost:8080")
 
 
 if __name__ == "__main__":

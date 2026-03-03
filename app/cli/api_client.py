@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import os
 from typing import Any
 
 import httpx
@@ -12,12 +10,11 @@ class PullApiClient:
         *,
         base_url: str,
         timeout_sec: float = 10.0,
-        pull_api_token: str | None = None,
+        pull_api_token: str,
         client: httpx.AsyncClient | None = None,
     ):
         self.base_url = base_url.rstrip("/")
-        token = pull_api_token if pull_api_token is not None else os.getenv("PULL_API_TOKEN")
-        self.pull_api_token = (token or "").strip()
+        self.pull_api_token = pull_api_token.strip()
         if not self.pull_api_token:
             raise ValueError("PULL_API_TOKEN must be configured for PullApiClient")
         self._client = client or httpx.AsyncClient(timeout=timeout_sec)

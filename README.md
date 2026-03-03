@@ -306,10 +306,17 @@ CLI находится в том же репозитории в модуле `ap
 Минимальные переменные окружения для CLI:
 
 ```env
+SERVER_BASE_URL=http://127.0.0.1:8000
 PULL_API_TOKEN=change_me
-CLI_BOT_ID=123456
-TGW_BASE_URL=http://127.0.0.1:8000
-CLI_CONSUMER_ID=cli-consumer
+BOT_ID=123456
+CONSUMER_ID=cli-consumer
+LOCAL_WEBHOOK_URL=http://127.0.0.1:9000/telegram/inbox
+
+# Optional
+POLL_INTERVAL_SEC=2.0
+BATCH_SIZE=10
+LEASE_SECONDS=30
+REQUEST_TIMEOUT_SEC=10.0
 ```
 
 ## 🧪 Local Development

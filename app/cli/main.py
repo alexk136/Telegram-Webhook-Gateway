@@ -15,12 +15,19 @@ logger = logging.getLogger("tgw-cli")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Telegram Webhook Gateway CLI consumer")
-    parser.add_argument("--base-url", dest="base_url", default=None, help="Gateway base URL")
+    parser.add_argument("--server-base-url", "--base-url", dest="server_base_url", default=None, help="Gateway base URL")
     parser.add_argument("--token", dest="pull_api_token", default=None, help="Pull API bearer token")
     parser.add_argument("--bot-id", dest="bot_id", default=None, help="Bot ID for pull requests")
     parser.add_argument("--consumer-id", dest="consumer_id", default=None, help="Consumer ID")
-    parser.add_argument("--pull-limit", dest="pull_limit", type=int, default=None, help="Pull batch size")
+    parser.add_argument("--batch-size", "--pull-limit", dest="batch_size", type=int, default=None, help="Pull batch size")
     parser.add_argument("--lease-seconds", dest="lease_seconds", type=int, default=None, help="Lease duration")
+    parser.add_argument(
+        "--request-timeout-sec",
+        dest="request_timeout_sec",
+        type=float,
+        default=None,
+        help="HTTP timeout for gateway/local webhook calls",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -49,13 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Local webhook URL for forwarding",
     )
-    poll_parser.add_argument(
-        "--local-timeout-sec",
-        dest="local_timeout_sec",
-        type=float,
-        default=None,
-        help="Local webhook HTTP timeout",
-    )
 
     return parser
 
@@ -64,7 +64,7 @@ async def run_pull_once(*, cfg: CLIConfig, api_client: PullApiClient) -> int:
     items = await api_client.pull_updates(
         bot_id=cfg.bot_id,
         consumer_id=cfg.consumer_id,
-        limit=cfg.pull_limit,
+        limit=cfg.batch_size,
         lease_seconds=cfg.lease_seconds,
     )
     print(json.dumps({"command": "pull-once", "count": len(items)}))
@@ -78,11 +78,14 @@ async def run_stats(*, api_client: PullApiClient, stats_bot_id: str | None) -> i
 
 
 async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int) -> int:
+    if not cfg.local_webhook_url:
+        raise ValueError("LOCAL_WEBHOOK_URL is required for poll command")
+
     poller = PullBridgePoller(
         api_client=api_client,
         local_webhook_url=cfg.local_webhook_url,
         consumer_id=cfg.consumer_id,
-        local_timeout_sec=cfg.local_timeout_sec,
+        local_timeout_sec=cfg.request_timeout_sec,
     )
 
     current = 0
@@ -90,7 +93,7 @@ async def run_poll(*, cfg: CLIConfig, api_client: PullApiClient, iterations: int
         items = await api_client.pull_updates(
             bot_id=cfg.bot_id,
             consumer_id=cfg.consumer_id,
-            limit=cfg.pull_limit,
+            limit=cfg.batch_size,
             lease_seconds=cfg.lease_seconds,
         )
         if items:
@@ -118,20 +121,23 @@ async def _main_async(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cfg = load_cli_config(
-        gateway_base_url=args.base_url,
+        server_base_url=args.server_base_url,
         pull_api_token=args.pull_api_token,
         bot_id=args.bot_id,
         consumer_id=args.consumer_id,
-        pull_limit=args.pull_limit,
+        batch_size=args.batch_size,
         lease_seconds=args.lease_seconds,
         poll_interval_sec=getattr(args, "poll_interval_sec", None),
         local_webhook_url=getattr(args, "local_webhook_url", None),
-        local_timeout_sec=getattr(args, "local_timeout_sec", None),
+        request_timeout_sec=args.request_timeout_sec,
+        require_local_webhook=args.command == "poll",
     )
+    logger.info("CLI config: %s", cfg.masked_dict())
 
     api_client = PullApiClient(
-        base_url=cfg.gateway_base_url,
+        base_url=cfg.server_base_url,
         pull_api_token=cfg.pull_api_token,
+        timeout_sec=cfg.request_timeout_sec,
     )
     try:
         if args.command == "pull-once":
@@ -147,7 +153,11 @@ async def _main_async(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO)
-    return asyncio.run(_main_async(argv))
+    try:
+        return asyncio.run(_main_async(argv))
+    except ValueError as exc:
+        logger.error("Configuration error: %s", exc)
+        return 2
 
 
 if __name__ == "__main__":

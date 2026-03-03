@@ -8,9 +8,10 @@ from app.cli.main import _main_async, build_parser
 
 
 class _FakeApiClient:
-    def __init__(self, *, base_url, pull_api_token):
+    def __init__(self, *, base_url, pull_api_token, timeout_sec=10.0):
         self.base_url = base_url
         self.pull_api_token = pull_api_token
+        self.timeout_sec = timeout_sec
         self.closed = False
 
     async def pull_updates(self, *, bot_id, consumer_id, limit, lease_seconds):
@@ -33,7 +34,10 @@ class CLIMainTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._old_env = dict(os.environ)
         os.environ["PULL_API_TOKEN"] = "tok"
-        os.environ["CLI_BOT_ID"] = "123456"
+        os.environ["BOT_ID"] = "123456"
+        os.environ["CONSUMER_ID"] = "consumer-A"
+        os.environ["SERVER_BASE_URL"] = "http://127.0.0.1:8000"
+        os.environ["LOCAL_WEBHOOK_URL"] = "http://127.0.0.1:9000/telegram/inbox"
 
     def tearDown(self):
         os.environ.clear()
