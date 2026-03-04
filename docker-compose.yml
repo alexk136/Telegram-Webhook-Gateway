@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  telegram-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    container_name: telegram-webhook-gateway
+    
+    # Автоматический перезапуск при сбое
+    restart: unless-stopped
+    
+    # Маппирование портов (хост:контейнер)
+    ports:
+      - "8000:8000"
+    
+    # Загрузка переменных окружения из .env
+    env_file:
+      - .env
+    
+    # Дополнительные переменные (опционально)
+    environment:
+      PORT: 8000
+      LOG_LEVEL: info
+    
+    # Монтирование томов для сохранения данных
+    volumes:
+      # Сохранение SQLite базы данных
+      - ./data:/app/data
+      # Опционально: логи контейнера
+      - ./logs:/app/logs
+    
+    # Проверка здоровья контейнера
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # Максимальный размер одного лога файла
+        max-file: "5"        # Количество ротируемых файлов
+        labels: "service=telegram-gateway"
+
+    # Сетевые настройки (опционально)
+    # networks:
+    #   - telegram-network
+
+    # Лимиты ресурсов (опционально, для production)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1'
+    #       memory: 512M
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 256M
+
+# Опционально: именованный том для сохранения БД
+# volumes:
+#   data:
+#     driver: local
+
+# Опционально: сеть для нескольких контейнеров
+# networks:
+#   telegram-network:
+#     driver: bridge
