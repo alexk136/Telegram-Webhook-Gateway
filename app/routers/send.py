@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 
 from app.config import settings
 from app.routers.pull import require_pull_api_auth
@@ -14,11 +14,23 @@ router = APIRouter(tags=["send"], dependencies=[Depends(require_pull_api_auth)])
 
 
 class SendRequest(BaseModel):
-    text: str
-    chat_id: int | None = None
-    key: str | None = None
-    disable_notification: bool | None = None
-    parse_mode: str | None = None
+    text: str = Field(..., description="Text message to send via Telegram Bot API.", examples=["Hello from gateway"])
+    chat_id: int | None = Field(
+        default=None,
+        description="Target chat id. Optional if DEFAULT_CHAT_ID or DEFAULT_CHAT_ID_BY_KEY is configured.",
+        examples=[123456789],
+    )
+    key: str | None = Field(
+        default=None,
+        description="Optional bot key alias resolved via BOT_TOKEN_BY_KEY.",
+        examples=["primary"],
+    )
+    disable_notification: bool | None = Field(default=None, description="Send silently without push notification.")
+    parse_mode: Literal["HTML", "MarkdownV2", "Markdown"] | None = Field(
+        default=None,
+        description="Telegram parse mode. Allowed values: HTML, MarkdownV2, Markdown.",
+        examples=["HTML"],
+    )
 
     @validator("text", pre=True)
     def validate_text(cls, value: Any) -> str:
@@ -44,17 +56,34 @@ class SendRequest(BaseModel):
             raise ValueError("chat_id must not be 0")
         return value
 
+    @validator("parse_mode", pre=True)
+    def normalize_parse_mode(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return text
+
 
 class SendResponse(BaseModel):
-    ok: bool
-    telegram_ok: bool
-    key_used: str | None
-    chat_id: int
-    message_id: int
-    bot_id: str
+    ok: bool = Field(..., description="Gateway operation status.", examples=[True])
+    telegram_ok: bool = Field(..., description="Raw Telegram API status.", examples=[True])
+    key_used: str | None = Field(default=None, description="Resolved key used for bot selection.")
+    chat_id: int = Field(..., description="Final chat id used for sending.")
+    message_id: int = Field(..., description="Telegram message id returned by sendMessage.")
+    bot_id: str = Field(..., description="Resolved bot id used for sending.")
 
 
-@router.post("/api/send", response_model=SendResponse)
+@router.post(
+    "/api/send",
+    response_model=SendResponse,
+    summary="Send Telegram Message",
+    description=(
+        "Sends a message using Telegram Bot API. "
+        "`key` and `chat_id` are optional and can be resolved from defaults configured in environment."
+    ),
+)
 async def send_message(payload: SendRequest):
     key = payload.key
     if key is not None and key not in settings.BOT_TOKEN_BY_KEY:

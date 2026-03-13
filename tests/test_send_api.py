@@ -143,6 +143,14 @@ class SendApiTests(unittest.IsolatedAsyncioTestCase):
             {"detail": "chat_id is required when no default is configured"},
         )
 
+    async def test_send_invalid_parse_mode_returns_422(self):
+        response = await self.client.post(
+            "/api/send",
+            json={"text": "hello", "parse_mode": "string"},
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

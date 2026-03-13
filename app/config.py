@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = Field(..., description="Telegram bot token")
     TELEGRAM_WEBHOOK_PATH: str = "/telegram/webhook"
     TELEGRAM_SECRET_TOKEN: str | None = None
+    TELEGRAM_INGEST_MODE: str = "auto"
+    TELEGRAM_POLL_TIMEOUT_SEC: int = 30
+    TELEGRAM_POLL_ERROR_DELAY_SEC: int = 3
 
     TARGET_WEBHOOK_URL: str | None = Field(
         None, description="Default webhook target"
@@ -96,6 +99,19 @@ class Settings(BaseSettings):
             return None
         if v == 0:
             raise ValueError("DEFAULT_CHAT_ID must not be 0")
+        return v
+
+    @validator("TELEGRAM_INGEST_MODE")
+    def validate_telegram_ingest_mode(cls, v: str) -> str:
+        value = str(v).strip().lower()
+        if value not in {"auto", "webhook", "poll"}:
+            raise ValueError("TELEGRAM_INGEST_MODE must be one of: auto, webhook, poll")
+        return value
+
+    @validator("TELEGRAM_POLL_TIMEOUT_SEC", "TELEGRAM_POLL_ERROR_DELAY_SEC")
+    def validate_positive_polling_values(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("TELEGRAM polling config values must be > 0")
         return v
 
     @property

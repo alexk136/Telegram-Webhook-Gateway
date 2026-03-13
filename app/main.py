@@ -4,7 +4,8 @@ from app.routers.health import router as health_router
 from app.routers.pull import router as pull_router
 from app.routers.send import router as send_router
 from app.pull_cleanup import run_pull_inbox_cleanup_once, utc_iso_or_none
-from app.webhook import telegram_webhook, telegram_webhook_by_key
+from app.webhook import process_telegram_update, telegram_webhook, telegram_webhook_by_key
+from app.bot import bot
 
 import asyncio
 import logging
@@ -16,6 +17,7 @@ from app.worker import worker_loop
 
 
 cleanup_task: asyncio.Task | None = None
+polling_task: asyncio.Task | None = None
 logger = logging.getLogger("app-main")
 
 
@@ -46,18 +48,9 @@ else:
     )
 
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "service": "telegram-webhook-gateway",
-        "public_mode": settings.PUBLIC_MODE,
-    }
-
-
 @app.on_event("startup")
 async def startup():
-    global cleanup_task
+    global cleanup_task, polling_task
     if not settings.PULL_API_TOKEN:
         raise RuntimeError("PULL_API_TOKEN must be configured for pull API")
 
@@ -67,10 +60,13 @@ async def startup():
         asyncio.create_task(worker_loop())
         cleanup_task = asyncio.create_task(_cleanup_loop())
 
+    if await _should_start_polling():
+        polling_task = asyncio.create_task(_polling_loop())
+
 
 @app.on_event("shutdown")
 async def shutdown():
-    global cleanup_task
+    global cleanup_task, polling_task
     if cleanup_task is not None:
         cleanup_task.cancel()
         try:
@@ -78,6 +74,14 @@ async def shutdown():
         except asyncio.CancelledError:
             pass
         cleanup_task = None
+
+    if polling_task is not None:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+        polling_task = None
 
 
 async def _cleanup_loop() -> None:
@@ -97,6 +101,43 @@ async def _cleanup_loop() -> None:
             state.cleanup_errors_total += 1
             logger.exception("pull inbox cleanup iteration failed")
         await asyncio.sleep(settings.PULL_INBOX_CLEANUP_INTERVAL_SEC)
+
+
+async def _should_start_polling() -> bool:
+    mode = settings.TELEGRAM_INGEST_MODE
+    if mode == "webhook":
+        return False
+    if mode == "poll":
+        return True
+
+    webhook_info = await bot.get_webhook_info()
+    return not bool((webhook_info.url or "").strip())
+
+
+async def _polling_loop() -> None:
+    logger.info("telegram polling fallback started")
+    next_offset: int | None = None
+
+    while True:
+        try:
+            updates = await bot.get_updates(
+                offset=next_offset,
+                timeout=settings.TELEGRAM_POLL_TIMEOUT_SEC,
+            )
+            for update in updates:
+                next_offset = int(update.update_id) + 1
+                try:
+                    await process_telegram_update(update)
+                except Exception:
+                    logger.exception(
+                        "telegram polling update processing failed for update_id=%s",
+                        update.update_id,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("telegram polling iteration failed")
+            await asyncio.sleep(settings.TELEGRAM_POLL_ERROR_DELAY_SEC)
 
 @app.get("/stats")
 async def stats():

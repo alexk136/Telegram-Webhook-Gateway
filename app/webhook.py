@@ -32,6 +32,11 @@ async def _telegram_webhook_impl(request: Request, bot_key: str | None):
         raise HTTPException(status_code=413, detail="Payload too large")
 
     update = Update.model_validate_json(body)
+    await process_telegram_update(update, bot_key=bot_key)
+    return {"ok": True}
+
+
+async def process_telegram_update(update: Update, *, bot_key: str | None = None) -> None:
     bot_id = _resolve_bot_id(bot_key)
 
     if settings.QUEUE_BACKEND == "sqlite" and state.queue is not None:
@@ -44,7 +49,6 @@ async def _telegram_webhook_impl(request: Request, bot_key: str | None):
         )
 
     await dp.feed_update(bot, update)
-    return {"ok": True}
 
 
 async def telegram_webhook(request: Request):

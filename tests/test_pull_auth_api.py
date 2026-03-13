@@ -164,6 +164,17 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["count"], 1)
         self.assertEqual(body["messages"][0]["bot_id"], self.bot_id)
 
+    async def test_pull_with_empty_payload_uses_defaults(self):
+        response = await self.client.post(
+            "/api/pull",
+            json={},
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["messages"][0]["bot_id"], self.bot_id)
+
     async def test_pull_empty_queue_returns_200_and_empty_messages(self):
         self.fake_queue.lease_pull = _empty_lease_pull  # type: ignore[method-assign]
         response = await self.client.post(
