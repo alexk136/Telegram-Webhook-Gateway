@@ -60,6 +60,7 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         self._old_queue_backend = settings.QUEUE_BACKEND
         self._old_pull_api_token = settings.PULL_API_TOKEN
         self._old_bot_token = settings.BOT_TOKEN
+        self._old_bot_context = settings.BOT_CONTEXT_BY_KEY
         self._old_queue = state.queue
 
         settings.QUEUE_BACKEND = "sqlite"
@@ -82,6 +83,7 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         settings.QUEUE_BACKEND = self._old_queue_backend
         settings.PULL_API_TOKEN = self._old_pull_api_token
         settings.BOT_TOKEN = self._old_bot_token
+        settings.BOT_CONTEXT_BY_KEY = self._old_bot_context
         state.queue = self._old_queue
 
     async def test_pull_unauthorized_variants_return_401(self):
@@ -129,6 +131,38 @@ class PullAuthApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["messages"][0]["payload"], {"ok": True})
         self.assertTrue(body["messages"][0]["lease_until"].endswith("Z"))
         self.assertEqual(self.fake_queue.lease_calls, 1)
+
+    async def test_pull_uses_default_bot_when_bot_id_not_provided(self):
+        response = await self.client.post(
+            "/api/pull",
+            json={
+                "consumer_id": "consumer-A",
+                "limit": 1,
+                "lease_seconds": 30,
+            },
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["messages"][0]["bot_id"], self.bot_id)
+
+    async def test_pull_supports_key_alias_for_bot_resolution(self):
+        settings.BOT_CONTEXT_BY_KEY = {"main": self.bot_id}
+        response = await self.client.post(
+            "/api/pull",
+            json={
+                "key": "main",
+                "consumer_id": "consumer-A",
+                "limit": 1,
+                "lease_seconds": 30,
+            },
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["messages"][0]["bot_id"], self.bot_id)
 
     async def test_pull_empty_queue_returns_200_and_empty_messages(self):
         self.fake_queue.lease_pull = _empty_lease_pull  # type: ignore[method-assign]

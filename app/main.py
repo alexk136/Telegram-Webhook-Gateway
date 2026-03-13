@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from app.config import settings
 from app.routers.health import router as health_router
 from app.routers.pull import router as pull_router
+from app.routers.send import router as send_router
 from app.pull_cleanup import run_pull_inbox_cleanup_once, utc_iso_or_none
 from app.webhook import telegram_webhook, telegram_webhook_by_key
 
@@ -22,6 +23,7 @@ app = FastAPI(title="Telegram Webhook Gateway")
 
 app.include_router(health_router)
 app.include_router(pull_router)
+app.include_router(send_router)
 
 if "{bot_key}" in settings.TELEGRAM_WEBHOOK_PATH:
     app.add_api_route(

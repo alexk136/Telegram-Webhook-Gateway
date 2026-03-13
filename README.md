@@ -159,7 +159,11 @@ OUTBOUND_SECRET=your_secret_here
 | `SQLITE_PATH` | `./events.db` | Queue database location |
 | `MAX_RETRIES` | `5` | Retry attempts before dropping |
 | `BASE_RETRY_DELAY_SEC` | `2` | Initial retry delay (exponential) |
-| `PULL_API_TOKEN` | — | Bearer token for `/api/pull`, `/api/ack`, `/api/nack`, `/api/pull/stats` |
+| `PULL_API_TOKEN` | — | Bearer token for `/api/pull`, `/api/ack`, `/api/nack`, `/api/pull/stats`, `/api/send` |
+| `DEFAULT_CHAT_ID` | — | Fallback chat id for `/api/send` when request omits `chat_id` |
+| `DEFAULT_BOT_KEY` | — | Fallback key for pull bot context resolution |
+| `BOT_TOKEN_BY_KEY` | — | Mapping `key:bot_token` for dynamic `/api/send` bot selection |
+| `DEFAULT_CHAT_ID_BY_KEY` | — | Mapping `key:chat_id` used by `/api/send` when `chat_id` is omitted |
 | `MAX_PULL_RETRIES` | `5` | Max pull retries before message moves to `dead` |
 | `PULL_INBOX_ACKED_RETENTION_DAYS` | `7` | Retention window for `acked` rows in `pull_inbox` |
 | `PULL_INBOX_DEAD_RETENTION_DAYS` | `30` | Retention window for `dead` rows in `pull_inbox` |
@@ -291,6 +295,13 @@ GET /api/pull/stats?bot_id=<bot_id>
 Authorization: Bearer <PULL_API_TOKEN>
 ```
 
+Optional filter by key alias:
+
+```
+GET /api/pull/stats?key=<bot_key>
+Authorization: Bearer <PULL_API_TOKEN>
+```
+
 Response:
 
 ```json
@@ -320,11 +331,34 @@ Request:
 ```json
 {
   "bot_id": "123456",
+  "key": "primary",
   "consumer_id": "local-cli-main",
   "limit": 10,
   "lease_seconds": 30
 }
 ```
+
+`bot_id` and `key` are optional. If both are omitted, the service uses default bot resolution.
+
+### Send Message To Telegram
+
+```
+POST /api/send
+Authorization: Bearer <PULL_API_TOKEN>
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "text": "Hello from gateway",
+  "key": "primary",
+  "chat_id": 123456789
+}
+```
+
+`key` and `chat_id` are optional. If omitted, defaults are used from environment settings.
 
 Response:
 

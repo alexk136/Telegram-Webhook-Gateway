@@ -7,18 +7,28 @@ from pydantic import BaseModel, Field, validator
 
 
 class PullRequestContract(BaseModel):
-    bot_id: str
+    bot_id: str | None = None
+    key: str | None = None
     consumer_id: str
     limit: int = Field(..., gt=0)
     lease_seconds: int = Field(..., gt=0)
 
-    @validator("bot_id", "consumer_id", pre=True)
+    @validator("consumer_id", pre=True)
     def ensure_non_empty(cls, value: Any) -> str:
         if value is None:
             raise ValueError("must not be empty")
         text = str(value).strip()
         if not text:
             raise ValueError("must not be empty")
+        return text
+
+    @validator("bot_id", "key", pre=True)
+    def normalize_optional_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
         return text
 
 

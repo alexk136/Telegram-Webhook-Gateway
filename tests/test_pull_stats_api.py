@@ -98,7 +98,7 @@ class PullStatsApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             body["pull_inbox"],
             {
-                "bot_id": None,
+                "bot_id": "123456",
                 "new_count": 3,
                 "leased_count": 2,
                 "acked_count": 7,
@@ -107,7 +107,7 @@ class PullStatsApiTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertTrue(body["generated_at"].endswith("Z"))
-        self.assertEqual(self.fake_queue.stats_calls, [None])
+        self.assertEqual(self.fake_queue.stats_calls, ["123456"])
         self.assertEqual(self.fake_queue.lease_calls, 0)
         self.assertEqual(self.fake_queue.ack_calls, 0)
         self.assertEqual(self.fake_queue.nack_calls, 0)
@@ -131,6 +131,24 @@ class PullStatsApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Unknown bot_id"})
         self.assertEqual(self.fake_queue.stats_calls, [])
+
+    async def test_stats_supports_key_filter(self):
+        response = await self.client.get(
+            "/api/pull/stats?key=secondary",
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["pull_inbox"]["bot_id"], "654321")
+        self.assertEqual(self.fake_queue.stats_calls, ["654321"])
+
+    async def test_stats_unknown_key_returns_404(self):
+        response = await self.client.get(
+            "/api/pull/stats?key=unknown",
+            headers={"Authorization": "Bearer pull-secret"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Unknown key"})
 
 
 if __name__ == "__main__":

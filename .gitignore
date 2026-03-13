@@ -1,19 +1,46 @@
-.env
-
-*.db
-*.sqlite
-*.sqlite3
-
-__pycache__/
-*.py[cod]
-
+# Virtual environments
 .venv/
 venv/
+env/
 
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Coverage and test outputs
+.coverage
+.coverage.*
+htmlcov/
+reports/
+artifacts/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
 Thumbs.db
 
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local runtime logs and tmp
 *.log
 
-.vscode/
-.idea/
+*.override.yaml

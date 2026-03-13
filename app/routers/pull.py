@@ -1,6 +1,6 @@
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 import app.state as state
@@ -81,18 +81,26 @@ class PullStatsResponse(BaseModel):
     generated_at: str
 
 
+def _resolve_pull_bot_id(*, bot_id: str | None, key: str | None) -> str:
+    normalized_key = key.strip() if key else None
+    if normalized_key and normalized_key not in settings.BOT_CONTEXT_BY_KEY:
+        raise HTTPException(status_code=404, detail="Unknown key")
+
+    resolved_bot_id = settings.resolve_bot_id(bot_id=bot_id, bot_key=normalized_key)
+    if resolved_bot_id not in settings.known_bot_ids:
+        raise HTTPException(status_code=404, detail="Unknown bot_id")
+    return resolved_bot_id
+
+
 @router.get("/api/pull/stats", response_model=PullStatsResponse)
-async def pull_stats(bot_id: str | None = None):
+async def pull_stats(
+    bot_id: str | None = Query(default=None),
+    key: str | None = Query(default=None),
+):
     if settings.QUEUE_BACKEND != "sqlite" or state.queue is None:
         raise HTTPException(status_code=503, detail="Queue backend is not available")
 
-    normalized_bot_id: str | None = None
-    if bot_id is not None:
-        normalized_bot_id = bot_id.strip()
-        if not normalized_bot_id:
-            raise HTTPException(status_code=422, detail="bot_id must not be empty")
-        if normalized_bot_id not in settings.known_bot_ids:
-            raise HTTPException(status_code=404, detail="Unknown bot_id")
+    normalized_bot_id = _resolve_pull_bot_id(bot_id=bot_id, key=key)
 
     stats = await state.queue.pull_inbox_stats(bot_id=normalized_bot_id)
     pull_inbox = PullInboxStats(
@@ -120,14 +128,13 @@ async def pull_messages(payload: PullRequestContract):
             detail=f"limit must be <= {settings.PULL_MAX_LIMIT}",
         )
 
-    if payload.bot_id not in settings.known_bot_ids:
-        raise HTTPException(status_code=404, detail="Unknown bot_id")
+    normalized_bot_id = _resolve_pull_bot_id(bot_id=payload.bot_id, key=payload.key)
 
     leased = await state.queue.lease_pull(
         consumer_id=payload.consumer_id,
         lease_seconds=payload.lease_seconds,
         limit=payload.limit,
-        bot_id=payload.bot_id,
+        bot_id=normalized_bot_id,
     )
 
     messages = [
